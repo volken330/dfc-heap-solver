@@ -585,6 +585,10 @@ var Swap = (function () {
   // Word at a donor's own offset at the read: a constant when the field is set data, otherwise variable.
   function fieldWord(actor, off, cfg, instAddr) {
     var C = function (w) { return { word: w >>> 0 }; }, V = { word: null, variable: true };
+    // home.rot: Actor_Spawn copies the spawn rotation and nothing rewrites it. The bottle drop spawns bug 1 at
+    // rot (0x4000, Link yaw, 0) and bug 1's Init spawns bugs 2/3 with its own shape.rot, so every dropped bug
+    // has home.rot.x = 0x4000 and home.rot.y = Link's facing at the drop.
+    if (actor === 'En_Insect' && off === 0x14) return { word: 0x40000000, known: 0xFFFF0000, field: 'home.rot.y = Link yaw' };
     if (off === 0xC8) return C(0xFF000000);                                                     // shape.shadowAlpha 255, feetFloorFlag 0
     if (actor === 'En_Insect' && (off === 0x50 || off === 0x54 || off === 0x58)) return C(0x3C23D70A); // scale 0.01
     if (actor === 'En_Insect' && off === 0xF4) return C(0x442F0000);
@@ -632,6 +636,7 @@ var Swap = (function () {
         if (d) {
           var f = fieldWord(d.actor, off, cfg, d.addr);
           res.word = f.word; res.from = { kind: 'donor', actor: d.actor, tag: tag, off: off }; res.variable = !!f.variable;
+          if (f.known !== undefined) { res.known = f.known; res.partField = f.field; }
           res.field = (/^bug (\d)/.test(tag) ? tag.replace(/^bug (\d)/, 'bug$1 ') : '') + fieldName(d.actor, off);
           res.why = res.field;
         } else { res.word = null; res.variable = true; res.field = tag; res.why = tag; }
@@ -645,7 +650,13 @@ var Swap = (function () {
       res.why = 'memory left over from before the fight (taken from the dump; your game may hold something else there)';
     } else { res.word = null; res.variable = true; res.field = src; res.why = src; }
     var mask = ROOM ? ROOM.mask : 0x40000040;
-    res.hit = res.variable ? null : (res.word & mask) !== 0;
+    if (res.known !== undefined) {
+      // partly known word: a hit if a target bit is in the known part, otherwise it depends on the unknown part
+      if (((res.word & mask & res.known) >>> 0) !== 0) res.hit = true;
+      else if (((mask & ~res.known) >>> 0) !== 0) { res.variable = true; res.hit = null; }
+      else res.hit = false;
+      res.field = (res.field || '') + ' (' + res.partField + ')';
+    } else res.hit = res.variable ? null : (res.word & mask) !== 0;
     return res;
   }
   var PLAIN = { En_Fish: 'fish', En_Insect: 'bug', En_Elf: 'fairy', En_Ice_Hono: 'blue fire', En_Bom: 'bomb', En_Bom_Chu: 'bombchu', En_Arrow: 'seed/arrow', En_M_Thunder: 'spin attack' };
@@ -684,7 +695,7 @@ var Swap = (function () {
           if (nExp > 3) return;
           var cfg = { attacker: atk, donor: d, units: us, age: age, unitArrow: !flyingOnly, sword: age === 'child' ? 'kokiri' : 'master', spin: 'big' };
           var r; try { r = run(cfg); } catch (e) { return; }
-          out.push({ cfg: cfg, word: r.word, hit: r.hit, variable: !!r.variable, field: r.field || null, fragile: !!r.fragile, why: r.why, atk: r.atk, src: r.src });
+          out.push({ cfg: cfg, word: r.word, known: r.known, partField: r.partField, hit: r.hit, variable: !!r.variable, field: r.field || null, fragile: !!r.fragile, why: r.why, atk: r.atk, src: r.src });
         });
       });
     });
@@ -860,8 +871,9 @@ var Swap = (function () {
       $(P + 'nvar').textContent = '(' + vars.length + ')';
       function entry(g, i, kind) {
         var h = g.rs[0], c = h.cfg, s = K[swKey(c)], n = permsCount(c.units);
-        var flag = kind === 'C' ? '<code>' + Array.from(new Set(g.rs.map(function (x) { return hex(x.word); }))).join(' / ') + '</code> ' + bitsText(h.word) + (g.rs.some(function (x) { return x.fragile; }) ? ' [address-dependent]' : '')
-          : '<code>????????</code> ' + esc(g.field);
+        function fmt(x) { if (x.known === undefined) return hex(x.word); var t = hex(x.word), k = hex(x.known); return t.split('').map(function (ch, j) { return k[j] === 'F' ? ch : '?'; }).join(''); }
+        var flag = kind === 'C' ? '<code>' + Array.from(new Set(g.rs.map(fmt))).join(' / ') + '</code> ' + bitsText(h.word & (h.known === undefined ? 0xFFFFFFFF : h.known)) + (h.partField ? ' (' + esc(h.partField) + ')' : '') + (g.rs.some(function (x) { return x.fragile; }) ? ' [address-dependent]' : '')
+          : '<code>' + (h.known !== undefined ? fmt(h) : '????????') + '</code> ' + esc(g.field);
         var orders = g.rs.length === n || c.units.length < 2 ? '<div><code>' + esc(actorOrder(c)) + '</code>' + (c.units.length > 1 ? ' (any order of the first ' + c.units.length + ')' : '') + '</div>' :
           g.rs.map(function (x) { return '<div><code>' + esc(actorOrder(x.cfg)) + '</code></div>'; }).join('');
         return '<div class="res"><div><b>' + esc(title(c)) + '</b></div><div>' + flag + '</div>' +
