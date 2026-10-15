@@ -745,8 +745,7 @@ var Swap = (function () {
   var ITEMS = [
     ['Equipment', [['sword', 'Sword'], ['magic', 'Magic'], ['slingshot', 'Slingshot'], ['bow', 'Bow']]],
     ['Explosives', [['bombs', 'Bombs'], ['bombchus', 'Bombchus']]],
-    ['Bottles', [['fairy', 'Fairy'], ['fish', 'Fish'], ['bugs', 'Bugs'], ['bluefire', 'Blue fire'], ['otherbottle', 'Potion / milk / poe']]],
-    ['Other', [['death', 'Death (fairy revive)']]]
+    ['Bottles', [['fairy', 'Fairy'], ['fish', 'Fish'], ['bugs', 'Bugs'], ['bluefire', 'Blue fire']]]
   ];
   var ALLKEYS = []; ITEMS.forEach(function (g) { g[1].forEach(function (it) { ALLKEYS.push(it[0]); }); });
   var ROOMDATA = { volv: DATA, gdorf: JSON.parse(document.getElementById('snapdata-gdorf').textContent) };
