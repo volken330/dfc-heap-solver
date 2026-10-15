@@ -585,10 +585,6 @@ var Swap = (function () {
   // Word at a donor's own offset at the read: a constant when the field is set data, otherwise variable.
   function fieldWord(actor, off, cfg, instAddr) {
     var C = function (w) { return { word: w >>> 0 }; }, V = { word: null, variable: true };
-    // home.rot: Actor_Spawn copies the spawn rotation and nothing rewrites it. The bottle drop spawns bug 1 at
-    // rot (0x4000, Link yaw, 0) and bug 1's Init spawns bugs 2/3 with its own shape.rot, so every dropped bug
-    // has home.rot.x = 0x4000 and home.rot.y = Link's facing at the drop.
-    if (actor === 'En_Insect' && off === 0x14) return { word: 0x40000000, known: 0xFFFF0000, field: 'home.rot.y = Link yaw' };
     if (off === 0xC8) return C(0xFF000000);                                                     // shape.shadowAlpha 255, feetFloorFlag 0
     if (actor === 'En_Insect' && (off === 0x50 || off === 0x54 || off === 0x58)) return C(0x3C23D70A); // scale 0.01
     if (actor === 'En_Insect' && off === 0xF4) return C(0x442F0000);
