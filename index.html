@@ -236,6 +236,8 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
 .grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin-top: 16px }
 @media (max-width: 520px) { .grid.two { grid-template-columns: minmax(0, 1fr) } }
 .tabpanel select { width: auto }
+.btn.calc { font-size: 1.05rem; font-weight: 600; padding: 8px 28px; margin-top: 6px }
+.btn.small { font-size: 0.8rem; padding: 0 6px; margin-left: 6px }
 </style>
 
 <div class="wrap">
@@ -331,7 +333,7 @@ var HeapEngine = (function () {
     h.pages = new Map(this.pages); h.owned = new Set(); this.owned = new Set();
     h.timeCtr = this.timeCtr; h.ovl = {};
     for (var k in this.ovl) h.ovl[k] = this.ovl[k].slice();
-    h.src = this.src ? new Map(this.src) : null; h.owner = new Map(this.owner); h.fixedTime = this.fixedTime;
+    h.src = this.src ? (this.src.clone ? this.src.clone() : new Map(this.src)) : null; h.owner = new Map(this.owner); h.fixedTime = this.fixedTime;
     return h;
   };
   Heap.prototype.u8 = function (a) {
@@ -507,7 +509,13 @@ var HeapEngine = (function () {
     var st = this.ovl[name]; st[1]--;
     if (st[1] === 0 && this.S.actors[name].alloc === 0 && st[0]) { this.free(st[0], 'code ' + name); st[0] = 0; }
   };
-  return { Snapshot: Snapshot, Heap: Heap, hex: hex, NODE: NODE };
+  // Label map that only keeps labels for a small address window (used by fast searches that only need the
+  // writer of one word).
+  function WatchMap(lo, n) { this.lo = lo >>> 0; this.hi = (lo + n) >>> 0; this.m = new Map(); }
+  WatchMap.prototype.set = function (k, v) { if (k >= this.lo && k < this.hi) this.m.set(k, v); return this; };
+  WatchMap.prototype.get = function (k) { return this.m.get(k); };
+  WatchMap.prototype.clone = function () { var w = new WatchMap(this.lo, this.hi - this.lo); w.m = new Map(this.m); return w; };
+  return { Snapshot: Snapshot, Heap: Heap, WatchMap: WatchMap, hex: hex, NODE: NODE };
 })();
 
 
@@ -597,19 +605,25 @@ var Swap = (function () {
     if (actor === 'En_Ice_Hono' && off === 0x154) return C(0);                                     // collider.base.ac NULL
     return V;                                                                                    // curFrame, lightNode, floorPoly, positions, ...
   }
-  function run(cfg) {
-    var h = new E.Heap(SNAP, true), A = ATTACKERS[cfg.attacker], live = [], log = [];
+  function unitTag(u, i) { return UNITS[u].label.toLowerCase() + ' ' + (i + 1); }
+  // pre (search only): { h: heap after the units were spawned (no labels), units: [...] }
+  function run(cfg, pre) {
+    var h = pre ? pre.h.clone() : new E.Heap(SNAP, true), A = ATTACKERS[cfg.attacker], live = [], log = [];
     function spawn(actor, tag) { var a = h.spawn(actor, tag); if (!a) throw new Error('no room for ' + tag); log.push(['+', tag, actor, a]); return a; }
-    var units = (cfg.units || []).map(function (u, i) {
-      var tag = UNITS[u].label.toLowerCase() + ' ' + (i + 1); return { kind: u, tag: tag, addr: spawn(UNITS[u].actor, tag) };
+    var units = pre ? pre.units : (cfg.units || []).map(function (u, i) {
+      var tag = unitTag(u, i); return { kind: u, tag: tag, addr: spawn(UNITS[u].actor, tag) };
     });
     var atk = spawn(A.actor, A.label);
+    if (pre) { // only the read word's writer is needed from here on
+      var ra = atk + A.off, lab = 'inst ' + A.label + '+' + hex(A.off & ~3, 3);
+      h.src = new E.WatchMap(ra, 4); h.src.set(ra, lab); h.src.set(ra + 2, lab);
+    }
     units.forEach(function (u) {
       if (u.kind === 'chu') { var b = spawn('En_Bom', u.tag + ' blast'); h.kill('En_Bom_Chu', u.addr); h.kill('En_Bom', b); }
       else h.kill(UNITS[u.kind].actor, u.addr);
       log.push(['-', u.tag]);
     });
-    var atPress = h.clone();
+    var atPress = pre ? null : h.clone();
     h.kill(A.actor, atk); log.push(['-', A.label]);
     var D = DONORS[cfg.donor], donors = D.spawn.map(function (s) { return { actor: s[0], tag: s[1], addr: spawn(s[0], s[1]) }; });
     if (cfg.donor === 'fairy' && cfg.age === 'child') { h.kill('En_Elf', donors[0].addr); log.push(['-', 'fairy']); }
@@ -676,25 +690,27 @@ var Swap = (function () {
     var flyingOnly = !A('bow');
     if (A('bombs')) kinds.push('bomb');
     if (A('bombchus')) kinds.push('chu');
-    var seqs = [[]];
-    for (var n = 1; n <= maxUnits; n++) {
-      var next = []; seqs.forEach(function (sq) { if (sq.length === n - 1) kinds.forEach(function (k) { next.push(sq.concat([k])); }); });
-      seqs = seqs.concat(next);
-    }
-    atks.forEach(function (atk) {
-      donors.forEach(function (d) {
-        if (d === 'revive' && atk !== 'ring') return;
-        seqs.forEach(function (us) {
-          var nSeed = us.filter(function (u) { return u === 'seed'; }).length, nExp = us.filter(function (u) { return u !== 'seed'; }).length;
-          if (flyingOnly && nSeed > 1) return;
-          if (flyingOnly && nSeed === 1 && us[us.length - 1] !== 'seed') return; // a flying seed only lasts ~15 updates: it has to be the last thing before the attack
-          if (nExp > 3) return;
-          var cfg = { attacker: atk, donor: d, units: us, age: age, unitArrow: !flyingOnly, sword: age === 'child' ? 'kokiri' : 'master', spin: 'big' };
-          var r; try { r = run(cfg); } catch (e) { return; }
-          out.push({ cfg: cfg, word: r.word, known: r.known, partField: r.partField, hit: r.hit, variable: !!r.variable, field: r.field || null, fragile: !!r.fragile, why: r.why, atk: r.atk, src: r.src });
-        });
+    var combos = [];
+    atks.forEach(function (atk) { donors.forEach(function (d) { if (d === 'revive' && atk !== 'ring') return; combos.push([atk, d]); }); });
+    function evalSeq(h, units, us) {
+      combos.forEach(function (c) {
+        var cfg = { attacker: c[0], donor: c[1], units: us, age: age, unitArrow: !flyingOnly, sword: age === 'child' ? 'kokiri' : 'master', spin: 'big' };
+        var r; try { r = run(cfg, { h: h, units: units }); } catch (e) { return; }
+        out.push({ cfg: cfg, word: r.word, known: r.known, partField: r.partField, hit: r.hit, variable: !!r.variable, field: r.field || null, fragile: !!r.fragile, why: r.why, atk: r.atk, src: r.src });
       });
-    });
+    }
+    // depth-first over unit spawn orders, sharing the heap of each prefix
+    (function rec(h, units, us, nSeed, nExp) {
+      evalSeq(h, units, us);
+      if (us.length >= maxUnits) return;
+      if (flyingOnly && nSeed) return;               // a flying seed has to be the last thing before the attack
+      kinds.forEach(function (k) {
+        if (k !== 'seed' && nExp >= 3) return;       // at most 3 explosives out
+        var h2 = h.clone(), tag = unitTag(k, us.length), a = h2.spawn(UNITS[k].actor, tag);
+        if (!a) return;
+        rec(h2, units.concat([{ kind: k, tag: tag, addr: a }]), us.concat([k]), nSeed + (k === 'seed' ? 1 : 0), nExp + (k === 'seed' ? 0 : 1));
+      });
+    })(new E.Heap(SNAP, false), [], [], 0, 0);
     return out;
   }
   return { ROOMS: ROOMS, fieldName: fieldName, run: run, search: search, setSnapshot: setSnapshot, ATTACKERS: ATTACKERS, DONORS: DONORS, UNITS: UNITS, RING_WORD: RING_WORD, plain: plain };
@@ -788,9 +804,8 @@ var Swap = (function () {
     root.innerHTML = '<div>' + TARGET + '</div><section class="card" aria-label="Items">' +
       '<div><b>Age</b><br><label><input type="radio" name="' + P + 'age" value="adult" checked> Adult</label> <label><input type="radio" name="' + P + 'age" value="child"> Child</label></div>' +
       '<div id="' + P + 'items"></div>' +
-      '<div><label for="' + P + 'max">Max actors spawned before the attack</label><br><select id="' + P + 'max">' + [0, 1, 2, 3, 4].map(function (n) { return '<option value="' + n + '">' + n + '</option>'; }).join('') + '</select></div>' +
-      '<div><button class="btn" type="button" id="' + P + 'all">All</button> <button class="btn" type="button" id="' + P + 'none">None</button></div>' +
-      '<div><span class="status" id="' + P + 'status"></span></div></section>' +
+      '<div><label for="' + P + 'max">Max actors spawned before the attack</label><br><select id="' + P + 'max">' + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) { return '<option value="' + n + '">' + n + '</option>'; }).join('') + '</select></div>' +
+      '<div><button class="btn calc" type="button" id="' + P + 'calc">Calculate</button> <span class="status" id="' + P + 'status"></span></div></section>' +
       '<div class="grid two"><section class="card" aria-label="Constant damage flags"><div><b>Constant damage flags</b> <span class="status" id="' + P + 'nconst"></span></div><div id="' + P + 'results"></div></section>' +
       '<section class="card" aria-label="Variable damage flags"><div><b>Variable damage flags</b> <span class="status" id="' + P + 'nvar"></span></div><div id="' + P + 'var"></div></section></div>';
     var st = { age: 'adult', allow: {}, max: 4 };
@@ -799,18 +814,21 @@ var Swap = (function () {
     function bitsText(w) { return R.bits.filter(function (b) { return w & b[0]; }).map(function (b) { return b[1]; }).join(', '); }
     function renderItems() {
       $(P + 'items').innerHTML = ITEMS.map(function (g) {
-        return '<div><b>' + g[0] + '</b><br>' + g[1].map(function (it) {
+        return '<div><b>' + g[0] + '</b>' + (g[0] === 'Equipment' ? ' <button class="btn small" type="button" data-set="all">All</button> <button class="btn small" type="button" data-set="none">None</button>' : '') + '<br>' + g[1].map(function (it) {
           return '<label><input type="checkbox" data-allow="' + it[0] + '"' + (st.allow[it[0]] ? ' checked' : '') + '> ' + it[1] + '</label>';
         }).join(' ') + '</div>';
       }).join('');
       $(P + 'items').querySelectorAll('[data-allow]').forEach(function (el) {
-        el.addEventListener('change', function () { st.allow[el.dataset.allow] = el.checked; search(); });
+        el.addEventListener('change', function () { st.allow[el.dataset.allow] = el.checked; save(); });
+      });
+      $(P + 'items').querySelectorAll('[data-set]').forEach(function (b) {
+        b.addEventListener('click', function () { var v = b.dataset.set === 'all'; ALLKEYS.forEach(function (k) { st.allow[k] = v; }); renderItems(); save(); });
       });
     }
-    root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.addEventListener('change', function () { st.age = el.value; search(); }); });
-    $(P + 'max').addEventListener('change', function () { st.max = +$(P + 'max').value; search(); });
-    $(P + 'all').addEventListener('click', function () { ALLKEYS.forEach(function (k) { st.allow[k] = true; }); renderItems(); search(); });
-    $(P + 'none').addEventListener('click', function () { ALLKEYS.forEach(function (k) { st.allow[k] = false; }); renderItems(); search(); });
+    function save() { store('swap5-' + room, JSON.stringify(st)); }
+    root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.addEventListener('change', function () { st.age = el.value; save(); }); });
+    $(P + 'max').addEventListener('change', function () { st.max = +$(P + 'max').value; save(); });
+    $(P + 'calc').addEventListener('click', function () { search(); });
     function pic(h, res, cfg, ttl, withRead) {
       var rng = R.pics.filter(function (p) { return res.atk >= p[0] && res.atk < p[1]; })[0] || [res.atk - 0x400, res.atk + 0x800];
       var lo = rng[0], hi = Math.max(rng[1], res.readAt + 0x200), span = hi - lo, html = [], alabel = Sw.ATTACKERS[cfg.attacker].label;
@@ -870,7 +888,7 @@ var Swap = (function () {
         var flag = kind === 'C' ? '<code>' + Array.from(new Set(g.rs.map(fmt))).join(' / ') + '</code> ' + bitsText(h.word & (h.known === undefined ? 0xFFFFFFFF : h.known)) + (h.partField ? ' (' + esc(h.partField) + ')' : '') + (g.rs.some(function (x) { return x.fragile; }) ? ' [address-dependent]' : '')
           : '<code>' + (h.known !== undefined ? fmt(h) : '????????') + '</code> ' + esc(g.field);
         var orders = g.rs.length === n || c.units.length < 2 ? '<div><code>' + esc(actorOrder(c)) + '</code>' + (c.units.length > 1 ? ' (any order of the first ' + c.units.length + ')' : '') + '</div>' :
-          g.rs.map(function (x) { return '<div><code>' + esc(actorOrder(x.cfg)) + '</code></div>'; }).join('');
+          g.rs.slice(0, 3).map(function (x) { return '<div><code>' + esc(actorOrder(x.cfg)) + '</code></div>'; }).join('') + (g.rs.length > 3 ? '<div class="status">(+' + (g.rs.length - 3) + ' more orders)</div>' : '');
         return '<div class="res"><div><b>' + esc(title(c)) + '</b></div><div>' + flag + '</div>' +
           orders + '<details data-pic="' + kind + i + '"><summary>Memory</summary><div class="pics"></div></details></div>';
       }
@@ -887,7 +905,8 @@ var Swap = (function () {
       });
     }
     renderItems();
-    search();
+    root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.checked = el.value === st.age; });
+    $(P + 'max').value = String(st.max);
   }
   makeSolver('volv');
   makeSolver('gdorf');
