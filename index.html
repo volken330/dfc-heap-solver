@@ -256,7 +256,7 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
   <section id="tab-volv" class="tabpanel"></section>
   <section id="tab-gdorf" class="tabpanel" hidden></section>
   <section id="tab-oi" class="tabpanel" hidden>
-  <style>.oisolve { display: grid; gap: 10px } .oisteps { font-size: 0.86rem; line-height: 1.5 } .oinotes { margin: 2px 0; padding-left: 18px; font-size: 0.84rem; color: var(--muted) } .oires { margin-top: 18px }</style>
+  <style>.oisolve { display: grid; gap: 10px } .oisteps { font-size: 0.86rem; line-height: 1.5 } .oinotes { margin: 2px 0; padding-left: 18px; font-size: 0.84rem; color: var(--muted) } .oires { margin-top: 18px } .tchip { display: inline-block; max-width: 100%; font-size: 0.74rem; line-height: 1.35; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; margin-left: 2px } .tchip.exact { color: var(--accent); border-color: var(--accent) } .tpend { font-size: 0.74rem; color: var(--muted) }</style>
       <details class="how" hidden>
         <summary>How this works</summary>
         <div>
@@ -1372,10 +1372,233 @@ var Method = (function () {
     });
     return risk;
   }
+  // ---- timing slack: how much the order pins down the things that just happen ----
+  // A found order writes every event in one sequence, but pops, blast fades, explosions, bugs digging away and the like
+  // are not things Link does; they happen on their own timers. slack() works out, for each of those "passive" events,
+  // where it may happen relative to the steps that stay put (Link's actions, the prime, the OI bomb and anything pinned):
+  //   hidden: it may happen anywhere it physically can (anywhere between its own earlier and later parts) → not worth
+  //           writing down;
+  //   lo / hi: it must happen after anchor lo and/or before anchor hi;
+  //   exact: it has to stay exactly where it is written.
+  // How it works: the steps that stay put split the order into gaps. Each passive event is tried in every gap (and every
+  // spot among the other passive events in that gap) with everything else where it is written, and re-checked with the
+  // same full analysis the solver uses (every ending order after the OI bomb, plus the method rules). Spots that can't
+  // happen in the game (feasible(order) is false: e.g. a bombchu blast outliving two presses) are ignored, so a bound is
+  // only reported when a spot that CAN happen breaks the heap or a rule. One event at a time doesn't prove they can all
+  // move together, so the claims are then checked jointly on random orders that obey all of them at once; if one fails,
+  // the event most to blame is pinned to where it is written (shown as exact) and everything is worked out again.
+  // feasible(order) → bool: the page's physical checks (bottles, lifetimes). opts.samples: joint orders to test (60).
+  function slack(items, order, donor, feasible, opts) {
+    opts = opts || {};
+    var m = { items: items, donor: donor, prime: 'chu' };
+    var iP = order.indexOf('@prime'), iO = order.indexOf('@oi'), iD = order.indexOf('@donor');
+    var primePop = iP > 0 ? order[iP - 1] : null; // the prime pop stays put: the prime is that pop
+    var checks = 0, cache = {}, seed = 12345;
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x80000000; } // fixed seed: same page, same result
+    // the item an event belongs to (null for markers and the OI bomb)
+    function itemEv(ev) { if (ev[0] === '@') return null; var it = itemOf(m, evSplit(ev)[0]); return it === OI ? null : it; }
+    function isHookEnd(ev) { var it = itemEv(ev); return !!it && it.kind === 'hook' && evSplit(ev)[1] === 'end'; }
+    // passive: not done by Link, not the prime pop, not the hookshot put-away (it follows the next draw on the same
+    // update), not the OI bomb's end (always after the OI) and not after the donor (those are fixed by the solver)
+    function passive(ev, i) { return ev[0] !== '@' && ev !== 'B:end' && i < iD && ev !== primePop && !isAction(m, ev) && !isHookEnd(ev); }
+    // the same item's previous and next part (chain order: start < pop/catch < fade/end)
+    function chainNb(ev) {
+      var it = itemEv(ev); if (!it) return [null, null];
+      var evs = eventsOf(it), k = evs.indexOf(ev);
+      return [k > 0 ? evs[k - 1] : null, k < evs.length - 1 ? evs[k + 1] : null];
+    }
+    // does this whole order still give the hammer word in every ending order, with no rule broken?
+    // 'na' = can't happen in the game (ignored), 'ok' or 'bad'
+    function status(ord) {
+      var k = ord.join(' '); if (cache[k]) return cache[k];
+      var s;
+      if (!feasible(ord)) s = 'na';
+      else { checks++; var a = analyse({ items: items, order: ord, donor: donor, prime: 'chu' }, { fast: true }); s = a.verdict === 'yes' && !a.problems.length ? 'ok' : 'bad'; }
+      return (cache[k] = s);
+    }
+    var pinned = {}; // passive events kept exactly where they are written
+    for (var round = 0; round < 30; round++) {
+      var r = layout();
+      if (r.pin) { pinned[r.pin] = true; continue; }
+      // claims are only ever narrowed, so this ends: at worst every event is held to its written gap
+      for (var it = 0; it < 400; it++) {
+        var fail = joint(r);
+        if (!fail) return finish(r);
+        var act = blame(r, fail);
+        if (act.pin) { pinned[act.pin] = true; r = null; break; }
+        narrow(r.claims[act.ev], act.side, act.g);
+      }
+      if (r) return finish(r); // gave up narrowing (shouldn't happen); report what was checked
+    }
+    return finish(layout());
+
+    // skeleton: the steps that stay put before the OI (pre), what stays put after it (post) and from the donor on (tail);
+    // gap g < pre.length is just before pre[g]; gap pre.length (POST) is after the OI bomb, where every order is checked
+    function skeleton() {
+      var pre = [], post = [], tail = order.slice(iD), mov = [], at = {};
+      for (var i = 0; i < iD; i++) {
+        var ev = order[i], mv = passive(ev, i) && !pinned[ev];
+        if (i <= iO) { if (mv) { mov.push(ev); at[ev] = pre.length; } else pre.push(ev); }
+        else if (mv) { mov.push(ev); at[ev] = -1; } else post.push(ev);
+      }
+      mov.forEach(function (ev) { if (at[ev] < 0) at[ev] = pre.length; });
+      return { pre: pre, post: post, tail: tail, mov: mov, at: at, POST: pre.length };
+    }
+    // build an order: gaps[g] = passive events in gap g, in order
+    function build(S, gaps) {
+      var o = [];
+      for (var g = 0; g < S.pre.length; g++) { o = o.concat(gaps[g] || []); o.push(S.pre[g]); }
+      return o.concat(S.post, gaps[S.POST] || [], S.tail);
+    }
+    // the gaps as written: every moving event in its gap, in the written order
+    function writtenGaps(S) { var gaps = {}; S.mov.forEach(function (ev) { (gaps[S.at[ev]] = gaps[S.at[ev]] || []).push(ev); }); return gaps; }
+    // a gap that nothing can happen in: between the prime pop and the prime, or between a draw and the hookshot put-away
+    function deadGap(S, g) { return g < S.POST && (S.pre[g] === '@prime' || isHookEnd(S.pre[g])); }
+    // where an event's chain neighbour is: its gap, or (for a fixed one) the gap range it allows
+    function gapOfFixed(S, ev) { var q = S.pre.indexOf(ev); return q >= 0 ? q : (S.post.indexOf(ev) >= 0 || S.tail.indexOf(ev) >= 0 ? S.POST + 1 : -1); }
+    // one event at a time: every gap it could go in, with everything else where it's written
+    function layout() {
+      var S = skeleton(), W = writtenGaps(S), claims = {}, pin = null;
+      for (var q = 0; q < S.mov.length && !pin; q++) {
+        var ev = S.mov[q], nb = chainNb(ev), gc = S.at[ev], lo = 0, hi = S.POST, st = [];
+        // chain limits from the neighbours where they are now
+        // (fixedLo/fixedHi: the same, counting only neighbours that stay put; a moving neighbour is handled jointly)
+        var fixedLo = 0, fixedHi = S.POST;
+        if (nb[0]) {
+          if (S.at[nb[0]] !== undefined) lo = Math.max(lo, S.at[nb[0]]);
+          else { var a0 = gapOfFixed(S, nb[0]); if (a0 > S.POST) fixedLo = S.POST; else if (a0 >= 0) fixedLo = a0 + 1; lo = Math.max(lo, fixedLo); }
+        }
+        if (nb[1]) {
+          if (S.at[nb[1]] !== undefined) hi = Math.min(hi, S.at[nb[1]]);
+          else { var b0 = gapOfFixed(S, nb[1]); if (b0 >= 0 && b0 <= S.POST) fixedHi = b0; hi = Math.min(hi, fixedHi); }
+        }
+        for (var g = 0; g <= S.POST; g++) {
+          if (g < lo || g > hi || deadGap(S, g)) { st[g] = 'na'; continue; }
+          var others = (W[g] || []).filter(function (x) { return x !== ev; }), spots = [];
+          if (g === S.POST) spots = [others.length]; // after the OI every order is checked anyway
+          else for (var s = 0; s <= others.length; s++) {
+            // keep the chain order with a neighbour in the same gap
+            if (nb[0] && others.indexOf(nb[0]) >= s) continue;
+            if (nb[1] && others.indexOf(nb[1]) >= 0 && others.indexOf(nb[1]) < s) continue;
+            spots.push(s);
+          }
+          var seen = {};
+          spots.forEach(function (s) {
+            var gaps = {}; for (var k in W) gaps[k] = W[k].filter(function (x) { return x !== ev; });
+            gaps[g] = others.slice(0, s).concat([ev], others.slice(s));
+            seen[status(build(S, gaps))] = 1;
+          });
+          st[g] = seen.ok && seen.bad ? 'mixed' : seen.ok ? 'ok' : seen.bad ? 'bad' : 'na';
+        }
+        // where it's written must work for every spot in its gap; if the order inside the gap matters, pin it
+        if (st[gc] !== 'ok') { pin = ev; break; }
+        var ga = gc, gb = gc;
+        while (true) { var d = ga - 1; while (d >= 0 && st[d] === 'na') d--; if (d >= 0 && st[d] === 'ok') ga = d; else break; }
+        while (true) { var u = gb + 1; while (u <= S.POST && st[u] === 'na') u++; if (u <= S.POST && st[u] === 'ok') gb = u; else break; }
+        var loBad = false, hiBad = false;
+        for (var g2 = 0; g2 < ga; g2++) if (st[g2] === 'bad' || st[g2] === 'mixed') loBad = true;
+        for (var g3 = gb + 1; g3 <= S.POST; g3++) if (st[g3] === 'bad' || st[g3] === 'mixed') hiBad = true;
+        // the gaps the claim allows: the ok run, widened to the fixed limits on a side with no bound (spots there that
+        // weren't tried one at a time, or can't happen, are left to the joint check and the feasibility filter)
+        var allow = []; for (var g4 = loBad ? ga : fixedLo; g4 <= (hiBad ? gb : fixedHi); g4++) if (!deadGap(S, g4) && st[g4] !== 'bad' && st[g4] !== 'mixed') allow.push(g4);
+        claims[ev] = { gc: gc, ga: loBad ? ga : null, gb: hiBad ? gb : null, allow: allow };
+      }
+      return { S: S, claims: pin ? null : claims, pin: pin };
+    }
+    // check the claims together: random orders that obey every claim at once (plus the two extremes)
+    function joint(r) {
+      var S = r.S, C = r.claims, mov = S.mov, tried = {}, n = 0;
+      // a gap for every moving event: lowest, highest or random allowed one (and never before its own earlier part)
+      function pick(mode) {
+        var gap = {};
+        for (var i = 0; i < mov.length; i++) {
+          var ev = mov[i], nb = chainNb(ev), lo = nb[0] && gap[nb[0]] !== undefined ? gap[nb[0]] : -1;
+          var c = C[ev].allow.filter(function (g) { return g >= lo; });
+          if (!c.length) return null;
+          gap[ev] = mode === 'lo' ? c[0] : mode === 'hi' ? c[c.length - 1] : c[Math.floor(rnd() * c.length)];
+        }
+        return gap;
+      }
+      // the order for a gap assignment; inside a gap in written order, or shuffled (an item's own parts stay in order)
+      function arrange(gap, shuffle) {
+        var gaps = {}, key = {};
+        mov.forEach(function (ev) { (gaps[gap[ev]] = gaps[gap[ev]] || []).push(ev); key[ev] = shuffle ? rnd() : mov.indexOf(ev); });
+        for (var g in gaps) {
+          gaps[g].sort(function (a, b) { return key[a] - key[b]; });
+          var byItem = {}; gaps[g].forEach(function (ev) { var id = evSplit(ev)[0]; (byItem[id] = byItem[id] || []).push(ev); });
+          for (var id in byItem) { var sorted = byItem[id].slice().sort(function (a, b) { return partRank(a) - partRank(b); }), j = 0; gaps[g] = gaps[g].map(function (ev) { return evSplit(ev)[0] === id ? sorted[j++] : ev; }); }
+        }
+        return { gap: gap, order: build(S, gaps) };
+      }
+      function test(smp) {
+        var k = smp.order.join(' '); if (tried[k]) return null; tried[k] = 1;
+        var st = status(smp.order); if (st === 'na') return null;
+        n++; return st === 'bad' ? smp : null;
+      }
+      // every gap assignment when there are few (exhaustive), else random ones; plus random orders inside the gaps
+      var all = [], cap = opts.exhaustive || 300;
+      (function rec(i, gap) {
+        if (!all) return;
+        if (i === mov.length) { if (all.length >= cap) all = null; else all.push(Object.assign({}, gap)); return; }
+        var ev = mov[i], nb = chainNb(ev), lo = nb[0] && gap[nb[0]] !== undefined ? gap[nb[0]] : -1;
+        C[ev].allow.forEach(function (g) { if (g >= lo) { gap[ev] = g; rec(i + 1, gap); } });
+        delete gap[ev];
+      })(0, {});
+      var f, want = opts.samples || 60;
+      if (all) for (var a = 0; a < all.length; a++) if ((f = test(arrange(all[a], false)))) return f;
+      for (var t = 0, got = 0; t < want * 6 && got < want; t++) {
+        var gp = all ? (all.length ? all[Math.floor(rnd() * all.length)] : null) : pick(t === 0 ? 'lo' : t === 1 ? 'hi' : 'rand');
+        if (!gp) continue;
+        var before = n;
+        if ((f = test(arrange(gp, all ? true : t > 1)))) return f;
+        if (n > before) got++;
+      }
+      r.samples = n; r.exhaustive = !!all;
+      return null;
+    }
+    // a joint order failed. Find the moved event whose return to its written gap fixes it (else the moved one with the
+    // most room) and narrow its claim on that side so the failing gap is no longer allowed. If nothing moved to another
+    // gap, the order inside a gap is what broke it: pin the first event that shares its gap.
+    function blame(r, smp) {
+      var S = r.S, C = r.claims, moved = S.mov.filter(function (ev) { return smp.gap[ev] !== S.at[ev]; });
+      function act(ev) { return { ev: ev, side: smp.gap[ev] > S.at[ev] ? 'hi' : 'lo', g: smp.gap[ev] }; }
+      for (var i = 0; i < moved.length; i++) {
+        var ev = moved[i], gaps = {};
+        S.mov.forEach(function (x) { var g = x === ev ? S.at[x] : smp.gap[x]; (gaps[g] = gaps[g] || []).push(x); });
+        var o = build(S, gaps), item = itemEv(ev), okChain = true;
+        if (item) { var evs = eventsOf(item); for (var j = 1; j < evs.length; j++) if (o.indexOf(evs[j]) >= 0 && o.indexOf(evs[j - 1]) > o.indexOf(evs[j])) okChain = false; }
+        if (okChain && status(o) === 'ok') return act(ev);
+      }
+      if (moved.length) { moved.sort(function (a, b) { return C[b].allow.length - C[a].allow.length; }); return act(moved[0]); }
+      var shared = S.mov.filter(function (ev) { return S.mov.some(function (x) { return x !== ev && S.at[x] === S.at[ev]; }); });
+      return { pin: shared[0] || S.mov[0] };
+    }
+    // drop gap g and everything beyond it on that side from a claim (its written gap always stays)
+    function narrow(c, side, g) {
+      c.allow = c.allow.filter(function (x) { return side === 'hi' ? x < g : x > g; });
+      if (side === 'hi') c.gb = c.allow[c.allow.length - 1]; else c.ga = c.allow[0];
+    }
+    // per event: { hidden } or { lo, hi, loHere, hiHere, post } or { exact }
+    function finish(r) {
+      var S = r.S, C = r.claims || {}, out = {};
+      order.forEach(function (ev, i) {
+        if (!passive(ev, i)) return;
+        if (pinned[ev] || !C[ev]) { out[ev] = { exact: true }; return; }
+        var c = C[ev];
+        if (c.ga === null && c.gb === null) { out[ev] = { hidden: true }; return; }
+        out[ev] = {
+          lo: c.ga === null ? null : c.ga === S.POST ? '@oi' : S.pre[c.ga - 1] || null,
+          hi: c.gb === null ? null : S.pre[c.gb],
+          loHere: c.ga === c.gc, hiHere: c.gb === c.gc, post: c.ga === S.POST
+        };
+      });
+      return { events: out, checks: checks, samples: r.samples || 0, exhaustive: !!r.exhaustive };
+    }
+  }
   function setSnapshot(s, names) { SNAP = s; SCENE_NAMES = {}; for (var k in (names || {})) SCENE_NAMES[+k] = names[k]; }
   return { ADD: ADD, addCombos: addCombos, solveCombo: solveCombo, solveNotes: solveNotes, solveRisk: solveRisk, solveFeasible: solveFeasible, isChange: isChange, isCatch: isCatch, bottlesOk: bottlesOk, bottlePlan: bottlePlan, KINDS: KINDS, LIFE: LIFE, setSnapshot: setSnapshot, analyse: analyse, relevance: relevance, explain: explain, timing: timing,
     search: search, rules: rules, isAction: isAction, evText: evText, eventsOf: eventsOf, itemOf: itemOf, phases: phases, nameOfTag: nameOfTag, holderAt: holderAt,
-    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress };
+    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack };
 })();
 
 
@@ -1821,7 +2044,7 @@ var Swap = (function () {
   try { oiWorkerURL = URL.createObjectURL(new Blob([coreSrc + '\n;onmessage=function(e){var d=e.data;var S=new HeapEngine.Snapshot(d.data);Method.setSnapshot(S,d.data.names);' +
     'd.tasks.forEach(function(t){var r=Method.solveCombo(t.core,t.adds,d.donors,{maxMs:d.maxMs});postMessage({type:"combo",r:{vi:t.vi,adds:r.adds,items:r.items,hits:r.hits,stopped:r.stopped}});});postMessage({type:"done"});};'], { type: 'text/javascript' })); } catch (e) { }
   function clearSolve() { oiStop(); $('oi-res-card').hidden = true; $('oi-results').innerHTML = ''; $('oi-status').textContent = ''; }
-  function oiStop() { oiSeq++; oiPool.forEach(function (w) { w.terminate(); }); oiPool = []; $('oi-stop').hidden = true; }
+  function oiStop() { oiSeq++; oiPool.forEach(function (w) { w.terminate(); }); oiPool = []; $('oi-stop').hidden = true; slackStop(); }
   $('oi-stop').addEventListener('click', function () { oiStop(); $('oi-status').textContent += ' (stopped)'; });
   $('oi-calc').addEventListener('click', function () {
     oiStop();
@@ -1865,6 +2088,72 @@ var Swap = (function () {
     return 'Extra items: ' + Object.keys(c).map(function (k) { return c[k] > 1 ? c[k] + ' × ' + ADD_TEXT[k] : ADD_TEXT[k]; }).join(', ');
   }
   var oiGroups = [];
+  // ---------- Bomb + OI results: how much the timing of each step that happens on its own matters ----------
+  // Method.slack() says, for each pop, fade, explosion or despawn in a found order, whether it must stay exactly where it
+  // is written, may only come after (lo) or before (hi) some step, or doesn't matter at all (hidden: not written).
+  // It re-checks the heap many times, so it runs in background workers after the results are shown, the shown order of
+  // every combination first; each order's steps are re-drawn when its answer comes back.
+  function slackChip(mm, c) {
+    if (c.exact || (c.lo && c.hi && c.loHere && c.hiHere)) return 'exactly here';
+    if (c.post && !c.hi) return 'after you pull the OI bomb';
+    function nm(e) { return e === '@oi' ? 'you pull the OI bomb' : e === '@prime' ? 'the prime' : '“' + M.evText(mm, e) + '”'; }
+    var a = c.lo ? (c.loHere ? 'here or later' : 'after ' + nm(c.lo)) : '', b = c.hi ? (c.hiHere ? 'here or earlier' : 'before ' + nm(c.hi)) : '';
+    return a && b ? a + ', ' + b : a || b;
+  }
+  // one order as text: added steps in bold, timing chips once known, steps whose timing doesn't matter left out
+  function oiSteps(g, h) {
+    var mm = { items: g.items, donor: h.donor }, S = h.slack && h.slack.events;
+    return h.order.filter(function (e) { return e !== '@prime' && e !== 'B:end' && !(S && S[e] && S[e].hidden); }).map(function (e) {
+      var t = esc(M.evText(mm, e)) + (h.plan && h.plan[e] === 'dupe' ? ' (equip-swap dupe)' : '');
+      if (/^x\d/.test(e)) t = '<b>' + t + '</b>';
+      var c = S && S[e];
+      if (c) { var ct = slackChip(mm, c); t += ' <span class="tchip' + (ct === 'exactly here' ? ' exact' : '') + '">' + esc(ct) + '</span>'; }
+      return t;
+    }).join(' &rarr; ') + (h.slack ? '' : ' <span class="tpend">(checking timing…)</span>');
+  }
+  var slackPool = [], slackSeq = 0, slackURL = null;
+  // a worker: sets up the heap snapshot from the first message, then answers every job in it
+  try { slackURL = URL.createObjectURL(new Blob([coreSrc + '\n;var ready=false;onmessage=function(e){var d=e.data;if(!ready){Method.setSnapshot(new HeapEngine.Snapshot(d.data),d.data.names);ready=true;}' +
+    'd.jobs.forEach(function(j){var s=null;try{s=Method.slack(j.items,j.order,j.donor,function(o){return !!Method.bottlePlan(j.items,o,j.donor,j.bottles)&&Method.solveFeasible(j.items,o,j.coreFirst,null,null,j.gaps);});}catch(x){}postMessage({key:j.key,s:s});});postMessage({done:true});};'], { type: 'text/javascript' })); } catch (e) { }
+  function slackStop() { slackSeq++; slackPool.forEach(function (w) { w.terminate(); }); slackPool = []; }
+  function slackStart() {
+    slackStop();
+    var id = slackSeq, jobs = [];
+    // the shown order of every combination first, then the other listed orders (at most 40 per combination)
+    [true, false].forEach(function (first) {
+      oiGroups.forEach(function (g, gi) {
+        g.hits.slice(0, 40).forEach(function (h, hi) {
+          if ((hi === 0) === first) jobs.push({ key: gi + ':' + hi, items: g.items, order: h.order, donor: h.donor, bottles: g.bottles, coreFirst: g.coreFirst, gaps: g.gaps });
+        });
+      });
+    });
+    if (!jobs.length) return;
+    function got(key, s) {
+      if (id !== slackSeq) return;
+      var p = key.split(':'), g = oiGroups[+p[0]], h = g && g.hits[+p[1]]; if (!h) return;
+      h.slack = s || { events: {}, failed: true }; // on an error the order stays as written, with no chips
+      var el = document.querySelector('[data-oisteps="' + key + '"]'); if (el) el.innerHTML = oiSteps(g, h);
+    }
+    if (!slackURL) { // no workers: one order per tick on this thread
+      (function next(i) {
+        if (id !== slackSeq || i >= jobs.length) return;
+        var j = jobs[i], s = null;
+        try { s = M.slack(j.items, j.order, j.donor, function (o) { return !!M.bottlePlan(j.items, o, j.donor, j.bottles) && M.solveFeasible(j.items, o, j.coreFirst, null, null, j.gaps); }); } catch (x) { }
+        got(j.key, s); setTimeout(function () { next(i + 1); }, 0);
+      })(0);
+      return;
+    }
+    var N = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2)), parts = [];
+    for (var i = 0; i < N; i++) parts.push([]);
+    jobs.forEach(function (j, k) { parts[k % N].push(j); });
+    parts.filter(function (p) { return p.length; }).forEach(function (p) {
+      var w; try { w = new Worker(slackURL); } catch (e) { return; }
+      slackPool.push(w);
+      w.onmessage = function (ev) { if (ev.data.done) { this.terminate(); return; } got(ev.data.key, ev.data.s); };
+      w.onerror = function () { p.forEach(function (j) { got(j.key, null); }); };
+      w.postMessage({ data: DATA, jobs: p });
+    });
+  }
   function showSolve(results) {
     var variants = variantsOf();
     oiGroups = [];
@@ -1892,28 +2181,22 @@ var Swap = (function () {
       });
       for (var d in by) {
         var hs = by[d].sort(function (a, b) { return (a.ec !== 'any') - (b.ec !== 'any') || a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
-        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0 });
+        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0, coreFirst: core.order[0], gaps: core.gaps, bottles: bottles });
       }
     });
     // results where it doesn't matter whether the bombchu blast outlasts the OI bomb spawn come first
     oiGroups.sort(function (a, b) { return (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
     $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText() + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
-    function steps(g, h) {
-      var mm = { items: g.items, donor: h.donor };
-      return h.order.filter(function (e) { return e !== '@prime' && e !== 'B:end'; }).map(function (e) {
-        var t = esc(M.evText(mm, e)) + (h.plan && h.plan[e] === 'dupe' ? ' (equip-swap dupe)' : ''); return /^x\d/.test(e) ? '<b>' + t + '</b>' : t;
-      }).join(' &rarr; ');
-    }
-    $('oi-results').innerHTML = oiGroups.length ? oiGroups.map(function (g, gi) {
+    $('oi-results').innerHTML = oiGroups.length ? '<p class="hint">Steps that happen on their own (explosions, fades, despawns) are marked with how much their timing matters: <span class="tchip exact">exactly here</span> <span class="tchip">here or later</span> <span class="tchip">here or earlier</span>, or a step they must come after or before. Every spot inside a marked range was checked to work, with the other steps also anywhere in their own ranges. A step whose timing doesn’t matter at all is left out. Unmarked steps are the ones you do.</p>' + oiGroups.map(function (g, gi) {
       var h = g.best, more = g.hits.slice(1, 40);
       return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; damage overwritten by ' + esc(donorName(g.donor)) + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
         '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + ' &middot; Bombchu blast after OI bomb? <b>' + BLAST_AFTER_OI[h.ec] + '</b>' + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
-        '<div class="oisteps">' + steps(g, h) + '</div>' +
+        '<div class="oisteps"><span data-oisteps="' + gi + ':0">' + oiSteps(g, h) + '</span></div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
         '<div><button class="btn small" type="button" data-oishow="' + gi + ':0">Show</button></div>' +
         (more.length ? '<details class="alts"><summary>+' + (g.hits.length - 1) + ' more orders</summary>' + more.map(function (x, k) {
-          return '<div class="oisteps"><button class="btn small" type="button" data-oishow="' + gi + ':' + (k + 1) + '">Show</button> ' + steps(g, x) + '</div>';
+          return '<div class="oisteps"><button class="btn small" type="button" data-oishow="' + gi + ':' + (k + 1) + '">Show</button> <span data-oisteps="' + gi + ':' + (k + 1) + '">' + oiSteps(g, x) + '</span></div>';
         }).join('') + (g.hits.length > 40 ? '<div class="status">(+' + (g.hits.length - 40) + ' more)</div>' : '') + '</details>' : '') +
         '</div>';
     }).join('') : '<p>None. Allow more things or a higher maximum.</p>';
@@ -1926,6 +2209,7 @@ var Swap = (function () {
         $('tab-oi').scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     });
+    slackStart();
   }
   function edited() { $('preset').value = 'own'; }
   $('prime').addEventListener('change', function () { m.prime = $('prime').value; edited(); update(); });
