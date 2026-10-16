@@ -707,7 +707,45 @@ var Swap = (function () {
     out.sort(function (a, b) { return a.drops.length - b.drops.length; });
     return out;
   }
-  function setSnapshot(s, room) { SNAP = s; ROOM = ROOMS[room || 'volv']; }
+  // Every floor made of one run of dropped tiles in memory order (plus the untouched floor), one per distinct
+  // layout of usable free blocks, fewest drops first.
+  var RUNFLOORS = null;
+  function runFloors() {
+    if (RUNFLOORS) return RUNFLOORS;
+    var T = SNAP.tiles.map(function (t) { return t.entry; }), lo = Math.min.apply(null, T), hi = Math.max.apply(null, T);
+    var base = new E.Heap(SNAP, false), seen = {}, out = [];
+    function key(h) { return h.blocks().filter(function (b) { return b[2] && b[1] >= 0x1B0; }).map(function (b) { return b[0].toString(36) + ':' + b[1].toString(36); }).join(','); }
+    var cands = [[]];
+    for (var a = lo; a <= hi; a++) for (var b = a; b <= hi; b++) {
+      var dr = T.filter(function (e) { return e >= a && e <= b; });
+      if (dr.length) cands.push(dr);
+    }
+    cands.sort(function (x, y) { return x.length - y.length; });
+    cands.forEach(function (dr) {
+      var h = base.clone(); dropTiles(h, dr); var k = key(h);
+      if (!seen[k]) { seen[k] = 1; out.push(dr); }
+    });
+    return (RUNFLOORS = out);
+  }
+  function groupKey(r) { return (r.variable ? 'V|' + r.field + '|' : 'C|') + r.cfg.attacker + '|' + r.cfg.donor + '|' + r.cfg.units.slice().sort().join('+'); }
+  // Search every floor in runFloors() whose index is part (mod nparts). Keeps, per setup, the results on the floor
+  // with the fewest drops and how many floors it works on.
+  function searchFloors(allow, age, maxUnits, opts, part, nparts, onFloor) {
+    var F = runFloors(), groups = {}, checked = 0;
+    for (var i = part || 0; i < F.length; i += nparts || 1) {
+      var r = search(allow, age, maxUnits, { ball: opts.ball, drops: F[i] }), local = {};
+      checked += r.length;
+      r.forEach(function (x) { if (!x.hit && !x.variable) return; var k = groupKey(x); (local[k] = local[k] || []).push(x); });
+      for (var k in local) {
+        var g = groups[k];
+        if (!g) groups[k] = { rs: local[k], nd: F[i].length, nf: 1 };
+        else { g.nf++; if (F[i].length < g.nd) { g.rs = local[k]; g.nd = F[i].length; } }
+      }
+      if (onFloor) onFloor(i, F.length);
+    }
+    return { checked: checked, groups: groups, floors: F.length };
+  }
+  function setSnapshot(s, room) { RUNFLOORS = null; SNAP = s; ROOM = ROOMS[room || 'volv']; }
   // Every combination the allowed items make possible. allow: set of keys (see ITEMS in the page).
   function search(allow, age, maxUnits, opts) {
     opts = opts || {};
@@ -768,7 +806,7 @@ var Swap = (function () {
     floors(opts.maxDrops || 0, opts.drops || []).forEach(function (f) { drops = f.drops; memo = {}; rec(f.h, [], [], 0, 0, 0); });
     return out;
   }
-  return { ROOMS: ROOMS, fieldName: fieldName, floors: floors, run: run, search: search, setSnapshot: setSnapshot, ATTACKERS: ATTACKERS, DONORS: DONORS, UNITS: UNITS, RING_WORD: RING_WORD, plain: plain };
+  return { runFloors: runFloors, searchFloors: searchFloors, groupKey: groupKey, ROOMS: ROOMS, fieldName: fieldName, floors: floors, run: run, search: search, setSnapshot: setSnapshot, ATTACKERS: ATTACKERS, DONORS: DONORS, UNITS: UNITS, RING_WORD: RING_WORD, plain: plain };
 })();
 
 </script>
@@ -797,7 +835,7 @@ var Swap = (function () {
 
   // ---------- find a working version ----------
   var workers = [], searching = false;
-  var workerSrc = coreSrc + '\n;onmessage=function(e){var d=e.data;if(d.kind==="swap"){var S0=new HeapEngine.Snapshot(d.data);S0.tiles=d.data.tiles;Swap.setSnapshot(S0,d.room);postMessage({type:"swdone",r:Swap.search(d.allow,d.age,d.max,d.opts)});return;}try{var S=new HeapEngine.Snapshot(d.data);Method.setSnapshot(S,d.data.names);' +
+  var workerSrc = coreSrc + '\n;onmessage=function(e){var d=e.data;if(d.kind==="swapagg"){var S1=new HeapEngine.Snapshot(d.data);S1.tiles=d.data.tiles;Swap.setSnapshot(S1,d.room);var ra=Swap.searchFloors(d.allow,d.age,d.max,d.opts,d.part,d.nparts,function(){postMessage({type:"swprog"});});postMessage({type:"swaggdone",r:ra});return;}if(d.kind==="swap"){var S0=new HeapEngine.Snapshot(d.data);S0.tiles=d.data.tiles;Swap.setSnapshot(S0,d.room);postMessage({type:"swdone",r:Swap.search(d.allow,d.age,d.max,d.opts)});return;}try{var S=new HeapEngine.Snapshot(d.data);Method.setSnapshot(S,d.data.names);' +
     'var r=Method.search(d.m,{extra:d.extra,userOrder:d.m.order,maxMs:d.maxMs,keep:8},function(n){postMessage({type:"p",n:n});});postMessage({type:"done",r:r,extra:d.extra});}catch(err){postMessage({type:"error",msg:err.message});}};';
   var workerURL = null;
   try { workerURL = URL.createObjectURL(new Blob([workerSrc], { type: 'text/javascript' })); } catch (e) { }
@@ -868,32 +906,38 @@ var Swap = (function () {
       '<div><label for="' + P + 'max">Max actors spawned before the attack</label><br><select id="' + P + 'max">' + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) { return '<option value="' + n + '">' + n + '</option>'; }).join('') + '</select></div>' +
       '</div>' + (room === 'gdorf' ? '<div id="' + P + 'map"></div>' : '') + '</div>' +
       '<div><button class="btn calc" type="button" id="' + P + 'calc">Calculate</button>' +
-      (room === 'gdorf' ? ' <label><input type="checkbox" id="' + P + 'ball"> Include manipulable light ball placement</label>' : '') +
+      (room === 'gdorf' ? ' <label><input type="checkbox" id="' + P + 'ball"> Include manipulable light ball placement</label> <label><input type="checkbox" id="' + P + 'drop"> Include platform dropping</label>' : '') +
       ' <span class="status" id="' + P + 'status"></span></div></section>' +
       '<div class="grid two"><section class="card" aria-label="Constant damage flags"><div><b>Constant damage flags</b> <span class="status" id="' + P + 'nconst"></span></div><div id="' + P + 'results"></div></section>' +
       '<section class="card" aria-label="Variable damage flags"><div><b>Variable damage flags</b> <span class="status" id="' + P + 'nvar"></span></div><div id="' + P + 'var"></div></section></div>';
-    var st = { age: 'adult', allow: {}, max: 4, ball: false, drop: false, drops: [] };
+    var st = { age: 'adult', allow: {}, max: 4, ball: false, drop: false };
     ALLKEYS.forEach(function (k) { st.allow[k] = true; });
     try { var sv = JSON.parse(load('swap5-' + room) || 'null'); if (sv && sv.allow) { for (var k0 in sv) st[k0] = sv[k0]; } } catch (e) { }
     function renderMap() {
       if (room !== 'gdorf') return;
-      var on = true, cells = [], V = [-420, -300, -180, -60, 60, 180, 300, 420];
+      var on = false, cells = [], V = [-420, -300, -180, -60, 60, 180, 300, 420];
       V.forEach(function (z) {
         V.forEach(function (x) {
           var t = PLAT.filter(function (q) { return q.x === x && q.z === z; })[0];
-          if (t) { var d = on && st.drops.indexOf(t.entry) >= 0; cells.push('<div class="pc plat' + (d ? ' dropped' : '') + (on ? ' on' : '') + '" data-e="' + t.entry + '">' + PLATNUM[t.entry] + '</div>'); }
+          if (t) { var d = false; cells.push('<div class="pc plat' + (d ? ' dropped' : '') + (on ? ' on' : '') + '" data-e="' + t.entry + '">' + PLATNUM[t.entry] + '</div>'); }
           else cells.push('<div class="pc ' + ((Math.abs(x) >= 300 && Math.abs(z) >= 300) || (Math.abs(x) < 120 && Math.abs(z) < 120) ? 'fixed' : 'pit') + '"></div>');
         });
       });
       $(P + 'map').innerHTML = '<div class="room"><div class="pgrid">' + cells.join('') + '</div><div class="door">door</div></div>';
-      $(P + 'map').querySelectorAll('.pc.plat.on').forEach(function (el) {
-        el.addEventListener('click', function () { var e = +el.dataset.e, i = st.drops.indexOf(e); if (i < 0) st.drops.push(e); else st.drops.splice(i, 1); save(); renderMap(); });
-      });
     }
     if (room === 'gdorf') {
       $(P + 'ball').checked = !!st.ball;
       $(P + 'ball').addEventListener('change', function () { st.ball = this.checked; save(); });
+      $(P + 'drop').checked = !!st.drop;
+      $(P + 'drop').addEventListener('change', function () { st.drop = this.checked; save(); maxOpts(); });
       renderMap();
+    }
+    // searching every floor is ~500 times the work, so dropping caps the actors at 4
+    function maxOpts() {
+      var hi = room === 'gdorf' && st.drop ? 4 : 10, sel = $(P + 'max');
+      if (st.max > hi) st.max = hi;
+      sel.innerHTML = Array.from({ length: hi + 1 }, function (_, n) { return '<option value="' + n + '">' + n + '</option>'; }).join('');
+      sel.value = String(st.max);
     }
     function bitsText(w) { return R.bits.filter(function (b) { return w & b[0]; }).map(function (b) { return b[1]; }).join(', '); }
     function renderItems() {
@@ -940,10 +984,11 @@ var Swap = (function () {
       root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.checked = el.value === st.age; });
       $(P + 'max').value = String(st.max);
       var allow = {}; ALLKEYS.forEach(function (k) { allow[k] = !!st.allow[k]; });
-      var opts = room === 'gdorf' ? { ball: !!st.ball, drops: st.drops.slice() } : {};
+      var opts = room === 'gdorf' ? { ball: !!st.ball } : {};
       var id = ++seq;
       $(P + 'status').textContent = '(searching)';
-      var done = function (res) { if (id === seq) show(res); };
+      var done = function (res, n) { if (id === seq) show(res, n); };
+      if (room === 'gdorf' && st.drop) return searchDrops(allow, opts, id);
       if (workerURL) {
         if (worker) worker.terminate();
         worker = new Worker(workerURL);
@@ -951,7 +996,34 @@ var Swap = (function () {
         worker.postMessage({ kind: 'swap', room: room, data: ROOMDATA[room], allow: allow, age: st.age, max: st.max, opts: opts });
       } else setTimeout(function () { Sw.setSnapshot(ROOMSNAP[room], room); done(Sw.search(allow, st.age, st.max, opts)); }, 10);
     }
-    function show(res) {
+    var pool = [];
+    function flatten(groups) { var res = []; for (var k in groups) groups[k].rs.forEach(function (r) { r.nf = groups[k].nf; res.push(r); }); return res; }
+    function merge(into, part) {
+      for (var k in part) { var g = into[k], p = part[k]; if (!g) into[k] = p; else { g.nf += p.nf; if (p.nd < g.nd) { g.rs = p.rs; g.nd = p.nd; } } }
+    }
+    function searchDrops(allow, opts, id) {
+      pool.forEach(function (w) { w.terminate(); }); pool = [];
+      var groups = {}, checked = 0, nf = 0, total = null;
+      if (!workerURL) {
+        setTimeout(function () { Sw.setSnapshot(ROOMSNAP[room], room); var r = Sw.searchFloors(allow, st.age, st.max, opts, 0, 1); if (id === seq) show(flatten(r.groups), r.checked); }, 10);
+        return;
+      }
+      Sw.setSnapshot(ROOMSNAP[room], room); total = Sw.runFloors().length;
+      var N = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4)), left = N;
+      for (var i = 0; i < N; i++) {
+        var w = new Worker(workerURL); pool.push(w);
+        w.onmessage = function (ev) {
+          if (id !== seq) return;
+          if (ev.data.type === 'swprog') { nf++; $(P + 'status').textContent = '(searching ' + nf + '/' + total + ' floors)'; return; }
+          if (ev.data.type === 'swaggdone') {
+            merge(groups, ev.data.r.groups); checked += ev.data.r.checked; this.terminate();
+            if (--left === 0) { pool = []; show(flatten(groups), checked); }
+          }
+        };
+        w.postMessage({ kind: 'swapagg', room: room, data: ROOMDATA[room], allow: allow, age: st.age, max: st.max, opts: opts, part: i, nparts: N });
+      }
+    }
+    function show(res, nChecked) {
       var groups = {}, order = [];
       res.forEach(function (r) {
         if (!r.hit && !r.variable) return;
@@ -961,10 +1033,10 @@ var Swap = (function () {
       });
       var all = order.map(function (k) { return groups[k]; });
       var K = KNOWN[room] || {};
-      function rank(g) { var s = K[swKey(g.rs[0].cfg)]; return (s ? (/^done/.test(s) ? 0 : /^in notes/.test(s) ? 1 : 2) : 3) * 100 + g.cfg.units.length; }
+      function rank(g) { var s = K[swKey(g.rs[0].cfg)]; return (s ? (/^done/.test(s) ? 0 : /^in notes/.test(s) ? 1 : 2) : 3) * 10000 + g.cfg.units.length * 100 + (g.cfg.drops ? g.cfg.drops.length : 0); }
       var cons = all.filter(function (g) { return !g.variable; }).sort(function (a, b) { return rank(a) - rank(b); });
       var vars = all.filter(function (g) { return g.variable; }).sort(function (a, b) { return rank(a) - rank(b); });
-      $(P + 'status').textContent = '(' + res.length + ' checked)';
+      $(P + 'status').textContent = '(' + (nChecked || res.length) + ' checked)';
       $(P + 'nconst').textContent = '(' + cons.length + ')';
       $(P + 'nvar').textContent = '(' + vars.length + ')';
       function entry(g, i, kind) {
@@ -975,7 +1047,7 @@ var Swap = (function () {
         var orders = g.rs.length === n || c.units.length < 2 ? '<div><code>' + esc(actorOrder(c)) + '</code>' + (c.units.length > 1 ? ' (any order of the first ' + c.units.length + ')' : '') + '</div>' :
           g.rs.slice(0, 3).map(function (x) { return '<div><code>' + esc(actorOrder(x.cfg)) + '</code></div>'; }).join('') + (g.rs.length > 3 ? '<div class="status">(+' + (g.rs.length - 3) + ' more orders)</div>' : '');
         return '<div class="res"><div><b>' + esc(title(c)) + '</b></div><div>' + flag + '</div>' +
-          orders + '<details data-pic="' + kind + i + '"><summary>Memory</summary><div class="pics"></div></details></div>';
+          orders + (h.nf > 1 ? '<div class="status">(+' + (h.nf - 1) + ' more floors)</div>' : '') + '<details data-pic="' + kind + i + '"><summary>Memory</summary><div class="pics"></div></details></div>';
       }
       $(P + 'results').innerHTML = cons.length ? cons.map(function (g, i) { return entry(g, i, 'C'); }).join('') : '<p>None.</p>';
       $(P + 'var').innerHTML = vars.length ? vars.map(function (g, i) { return entry(g, i, 'V'); }).join('') : '<p>None.</p>';
@@ -991,7 +1063,7 @@ var Swap = (function () {
     }
     renderItems();
     root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.checked = el.value === st.age; });
-    $(P + 'max').value = String(st.max);
+    maxOpts();
   }
   makeSolver('volv');
   makeSolver('gdorf');
