@@ -1278,15 +1278,30 @@ var Method = (function () {
 // lock = the step from which Link's hands are busy until the prime (no added actions after it).
 var PRESETS = [
   { name: 'Long chu',
+    // the bottled item can be fish or bugs, dropped before or after the first bomb; the catch is always after the bomb.
+    // Solve tries every variant and says which one each result uses.
     method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
       { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
       { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
-      order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
-  { name: 'Long chu, bugs as the bottled item',
-    method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
-      { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
-      { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
-      order: ['c:start', 'b:start', 'x:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } },
+      order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] },
+    variants: [
+      { label: 'bottled bugs, released before the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
+        order: ['c:start', 'b:start', 'x:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } },
+      { label: 'bottled bugs, released after the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
+        order: ['c:start', 'x:start', 'b:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } },
+      { label: 'bottled fish, dropped before the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
+        order: ['c:start', 'f:start', 'x:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
+      { label: 'bottled fish, dropped after the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
+        order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } }
+    ] },
   { name: 'Fish chu',
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
@@ -1675,10 +1690,11 @@ var Swap = (function () {
   function bottlesText(b) { var t = []; if (b.fish) t.push(b.fish + ' fish'); if (b.bugs) t.push(b.bugs + ' bug'); if (b.empty) t.push(b.empty + ' empty'); return t.join(' + ') + ' bottle' + (b.fish + b.bugs + b.empty > 1 ? 's' : '') + (b.noDupe ? ', no equip swap' : ', equip swap allowed'); }
   $('oi-max').addEventListener('change', function () { oiSt.max = +$('oi-max').value; store('oisolve3', JSON.stringify(oiSt)); });
   function coreOf() { var p = PRESETS[+$('preset').value] || PRESETS[0]; return p.method; }
+  function variantsOf() { var p = PRESETS[+$('preset').value] || PRESETS[0]; return p.variants || [{ label: '', method: p.method }]; }
   function showCore() { setMethod(coreOf(), ''); $('oi-viewing').textContent = '(the method on its own)'; }
   var oiPool = [], oiSeq = 0, oiWorkerURL = null;
   try { oiWorkerURL = URL.createObjectURL(new Blob([coreSrc + '\n;onmessage=function(e){var d=e.data;var S=new HeapEngine.Snapshot(d.data);Method.setSnapshot(S,d.data.names);' +
-    'd.combos.forEach(function(c){var r=Method.solveCombo(d.core,c,d.donors,{maxMs:d.maxMs});postMessage({type:"combo",r:{adds:r.adds,items:r.items,hits:r.hits,stopped:r.stopped}});});postMessage({type:"done"});};'], { type: 'text/javascript' })); } catch (e) { }
+    'd.tasks.forEach(function(t){var r=Method.solveCombo(t.core,t.adds,d.donors,{maxMs:d.maxMs});postMessage({type:"combo",r:{vi:t.vi,adds:r.adds,items:r.items,hits:r.hits,stopped:r.stopped}});});postMessage({type:"done"});};'], { type: 'text/javascript' })); } catch (e) { }
   function clearSolve() { oiStop(); $('oi-res-card').hidden = true; $('oi-results').innerHTML = ''; $('oi-status').textContent = ''; }
   function oiStop() { oiSeq++; oiPool.forEach(function (w) { w.terminate(); }); oiPool = []; $('oi-stop').hidden = true; }
   $('oi-stop').addEventListener('click', function () { oiStop(); $('oi-status').textContent += ' (stopped)'; });
@@ -1687,7 +1703,11 @@ var Swap = (function () {
     var id = ++oiSeq, core = clone(coreOf()), kinds = [];
     ['bomb', 'chu', 'arrow', 'hook', 'fish', 'bugs'].forEach(function (k) { if (oiSt.allow[k]) kinds = kinds.concat(OI_KINDS[k]); });
     var donors = ['fish', 'bugs'];
-    var combos = M.addCombos(kinds, oiSt.max).sort(function (a, b) { return b.length - a.length; });
+    var variants = variantsOf(), tasks = [];
+    M.addCombos(kinds, oiSt.max).sort(function (a, b) { return b.length - a.length; }).forEach(function (c) {
+      variants.forEach(function (v, vi) { tasks.push({ core: clone(v.method), adds: c, vi: vi }); });
+    });
+    var combos = tasks;
     var results = [], left = combos.length, stopped = 0, t0 = Date.now();
     $('oi-status').textContent = '(solving 0/' + combos.length + ' combinations)'; $('oi-stop').hidden = false;
     function got(r) { results.push(r); if (r.stopped) stopped++; left--; $('oi-status').textContent = '(solving ' + (combos.length - left) + '/' + combos.length + ' combinations)'; }
@@ -1696,7 +1716,7 @@ var Swap = (function () {
       $('oi-status').textContent = '(' + combos.length + ' combinations checked in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s' + (stopped ? '; ' + stopped + ' cut short' : '') + ')';
       showSolve(results);
     }
-    if (!oiWorkerURL) { setTimeout(function () { combos.forEach(function (c) { got(M.solveCombo(core, c, donors, { maxMs: 20000 })); }); if (id === oiSeq) finishAll(); }, 10); return; }
+    if (!oiWorkerURL) { setTimeout(function () { tasks.forEach(function (t) { var r = M.solveCombo(t.core, t.adds, donors, { maxMs: 20000 }); r.vi = t.vi; got(r); }); if (id === oiSeq) finishAll(); }, 10); return; }
     var N = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4)), parts = [];
     for (var i = 0; i < N; i++) parts.push([]);
     combos.forEach(function (c, i) { parts[i % N].push(c); });
@@ -1709,7 +1729,7 @@ var Swap = (function () {
         if (ev.data.type === 'combo') got(ev.data.r);
         else if (ev.data.type === 'done') { this.terminate(); if (--busy === 0) { oiPool = []; finishAll(); } }
       };
-      w.postMessage({ data: DATA, core: core, combos: p, donors: donors, maxMs: 20000 });
+      w.postMessage({ data: DATA, tasks: p, donors: donors, maxMs: 20000 });
     });
   });
   function addsTitle(adds) {
@@ -1719,10 +1739,10 @@ var Swap = (function () {
   }
   var oiGroups = [];
   function showSolve(results) {
-    var core = coreOf(), coreN = core.order.length;
+    var variants = variantsOf();
     oiGroups = [];
     results.forEach(function (r) {
-      var by = {};
+      var by = {}, v = variants[r.vi || 0], core = v.method;
       var bottles = oiBottles(core);
       r.hits = r.hits.filter(function (h) { h.plan = M.bottlePlan(r.items, h.order, h.donor, bottles); return h.plan && M.solveFeasible(r.items, h.order, core.order[0], null, null, core.gaps); });
       r.hits.forEach(function (h) {
@@ -1735,12 +1755,12 @@ var Swap = (function () {
       });
       for (var d in by) {
         var hs = by[d].sort(function (a, b) { return a.risk - b.risk || a.notes.length - b.notes.length || a.mix - b.mix; });
-        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0] });
+        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0 });
       }
     });
-    oiGroups.sort(function (a, b) { return a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || b.hits.length - a.hits.length; });
+    oiGroups.sort(function (a, b) { return a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
-    $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText(oiBottles(core)) + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
+    $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with your bottled item + ' + (oiSt.second && oiSt.second !== 'none' ? 'a ' + oiSt.second + ' bottle' : 'no second bottle') + (oiSt.dupe ? ', equip swap allowed' : ', no equip swap') + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
     function steps(g, h) {
       var mm = { items: g.items, donor: h.donor };
       return h.order.filter(function (e) { return e !== '@prime' && e !== 'B:end'; }).map(function (e) {
@@ -1749,7 +1769,7 @@ var Swap = (function () {
     }
     $('oi-results').innerHTML = oiGroups.length ? oiGroups.map(function (g, gi) {
       var h = g.best, more = g.hits.slice(1, 40);
-      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + g.donor + '</div>' +
+      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + g.donor + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
         '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
         '<div class="oisteps">' + steps(g, h) + '</div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
@@ -1763,7 +1783,7 @@ var Swap = (function () {
       b.addEventListener('click', function () {
         var p = b.dataset.oishow.split(':'), g = oiGroups[+p[0]], h = g.hits[+p[1]];
         setMethod({ items: g.items, order: h.order, donor: h.donor, prime: 'chu' }, '', true);
-        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + ', donor ' + g.donor + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
+        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + ', donor ' + g.donor + (g.vlabel ? ', ' + esc(g.vlabel) : '') + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
         $('oi-back').addEventListener('click', showCore);
         $('tab-oi').scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
