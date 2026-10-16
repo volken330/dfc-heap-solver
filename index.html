@@ -868,7 +868,7 @@ var Swap = (function () {
       '<div><label for="' + P + 'max">Max actors spawned before the attack</label><br><select id="' + P + 'max">' + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) { return '<option value="' + n + '">' + n + '</option>'; }).join('') + '</select></div>' +
       '</div>' + (room === 'gdorf' ? '<div id="' + P + 'map"></div>' : '') + '</div>' +
       '<div><button class="btn calc" type="button" id="' + P + 'calc">Calculate</button>' +
-      (room === 'gdorf' ? ' <label><input type="checkbox" id="' + P + 'ball"> Include manipulable light ball placement</label> <label><input type="checkbox" id="' + P + 'drop"> Include platform dropping</label>' : '') +
+      (room === 'gdorf' ? ' <label><input type="checkbox" id="' + P + 'ball"> Include manipulable light ball placement</label>' : '') +
       ' <span class="status" id="' + P + 'status"></span></div></section>' +
       '<div class="grid two"><section class="card" aria-label="Constant damage flags"><div><b>Constant damage flags</b> <span class="status" id="' + P + 'nconst"></span></div><div id="' + P + 'results"></div></section>' +
       '<section class="card" aria-label="Variable damage flags"><div><b>Variable damage flags</b> <span class="status" id="' + P + 'nvar"></span></div><div id="' + P + 'var"></div></section></div>';
@@ -877,7 +877,7 @@ var Swap = (function () {
     try { var sv = JSON.parse(load('swap5-' + room) || 'null'); if (sv && sv.allow) { for (var k0 in sv) st[k0] = sv[k0]; } } catch (e) { }
     function renderMap() {
       if (room !== 'gdorf') return;
-      var on = st.drop, cells = [], V = [-420, -300, -180, -60, 60, 180, 300, 420];
+      var on = true, cells = [], V = [-420, -300, -180, -60, 60, 180, 300, 420];
       V.forEach(function (z) {
         V.forEach(function (x) {
           var t = PLAT.filter(function (q) { return q.x === x && q.z === z; })[0];
@@ -891,9 +891,8 @@ var Swap = (function () {
       });
     }
     if (room === 'gdorf') {
-      $(P + 'ball').checked = !!st.ball; $(P + 'drop').checked = !!st.drop;
+      $(P + 'ball').checked = !!st.ball;
       $(P + 'ball').addEventListener('change', function () { st.ball = this.checked; save(); });
-      $(P + 'drop').addEventListener('change', function () { st.drop = this.checked; save(); renderMap(); });
       renderMap();
     }
     function bitsText(w) { return R.bits.filter(function (b) { return w & b[0]; }).map(function (b) { return b[1]; }).join(', '); }
@@ -941,7 +940,7 @@ var Swap = (function () {
       root.querySelectorAll('input[name="' + P + 'age"]').forEach(function (el) { el.checked = el.value === st.age; });
       $(P + 'max').value = String(st.max);
       var allow = {}; ALLKEYS.forEach(function (k) { allow[k] = !!st.allow[k]; });
-      var opts = room === 'gdorf' ? { ball: !!st.ball, drops: st.drop ? st.drops.slice() : [] } : {};
+      var opts = room === 'gdorf' ? { ball: !!st.ball, drops: st.drops.slice() } : {};
       var id = ++seq;
       $(P + 'status').textContent = '(searching)';
       var done = function (res) { if (id === seq) show(res); };
