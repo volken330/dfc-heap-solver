@@ -731,9 +731,57 @@ var Method = (function () {
   }
 
   // ---- runner ----
-  function Run(labels) { this.h = new E.Heap(SNAP, labels); this.tags = {}; }
+  // ---- bombchu timing rules (physical, not heap) ----
+  // 1. Bombchus explode in the order they were sent. A bombchu runs until it hits something, so one sent later can only
+  //    explode first if it is set off the moment it is sent (e.g. with the sword): its explosion comes right after its
+  //    send, with nothing in between (a hookshot put away by that send happens on the same update and doesn't count).
+  // 2. Every bombchu blast lasts the same ~12 updates, so blasts fade in the order they appeared.
+  // State: q = bombchus sent and still running, in send order; b = blasts still out, in the order they appeared;
+  // last = the last event (ignoring hookshot put-aways). chuStep returns the state after ev, or null if ev breaks a rule.
+  // Only the part of an order before the OI bomb is ordered; after it every order is checked, so it isn't walked here.
+  var CHU0 = { q: [], b: [], last: null };
+  function chuStep(m, st, ev) {
+    var it = ev[0] !== '@' ? itemOf(m, evSplit(ev)[0]) : null, part = ev[0] !== '@' ? evSplit(ev)[1] : null;
+    if (it && it !== OI && it.kind === 'hook' && part === 'end') return st; // same update as the draw that put it away
+    var q = st.q, b = st.b;
+    if (it && it !== OI && it.kind === 'chu') {
+      var id = it.id;
+      if (part === 'start') q = q.concat([id]);
+      else if (part === 'pop') {
+        if (q.indexOf(id) > 0 && st.last !== id + ':start') return null; // a bombchu sent earlier is still running
+        q = q.filter(function (x) { return x !== id; }); b = b.concat([id]);
+      } else if (part === 'fade') {
+        if (b.indexOf(id) > 0) return null; // a blast that appeared earlier is still out
+        b = b.filter(function (x) { return x !== id; });
+      }
+    }
+    return { q: q, b: b, last: ev };
+  }
+  // the part of the state that decides what can come next (for search memo keys)
+  function chuKey(st) { return st.q.join(',') + '/' + st.b.join(',') + '/' + (st.last && /:start$/.test(st.last) ? st.last : ''); }
+  // problems with these rules in a whole order (the part before the OI bomb)
+  function chuProblems(m, order) {
+    var st = CHU0, out = [], iO = order.indexOf('@oi'), end = iO < 0 ? order.length : iO;
+    for (var i = 0; i < end; i++) {
+      var ev = order[i], nx = chuStep(m, st, ev);
+      if (nx) { st = nx; continue; }
+      var id = evSplit(ev)[0], part = evSplit(ev)[1], it = itemOf(m, id);
+      if (part === 'pop') {
+        var first = itemOf(m, st.q[0]);
+        out.push({ ev: ev, msg: it.name + ' explodes before ' + first.name + ', which was sent earlier and is still running. A bombchu sent later can only explode first if you set it off as soon as you send it, so “' + evText(m, ev) + '” has to come right after “' + evText(m, id + ':start') + '”.' });
+      } else {
+        var older = itemOf(m, st.b[0]);
+        out.push({ ev: ev, msg: it.name + '’s blast fades before ' + older.name + '’s, but ' + older.name + ' exploded first. Every bombchu blast lasts the same ~12 updates, so they fade in the order they appeared.' });
+      }
+      // carry on as if the rule held, to report later problems too
+      var q2 = st.q.filter(function (x) { return x !== id; }), b2 = st.b.filter(function (x) { return x !== id; });
+      st = { q: q2, b: part === 'pop' ? b2.concat([id]) : b2, last: ev };
+    }
+    return out;
+  }
+  function Run(labels) { this.h = new E.Heap(SNAP, labels); this.tags = {}; this.cs = CHU0; }
   var SNAP = null;
-  Run.prototype.clone = function () { var r = Object.create(Run.prototype); r.h = this.h.clone(); r.tags = {}; r.primed = this.primed; for (var k in this.tags) r.tags[k] = this.tags[k].slice(); return r; };
+  Run.prototype.clone = function () { var r = Object.create(Run.prototype); r.h = this.h.clone(); r.tags = {}; r.primed = this.primed; r.cs = this.cs; for (var k in this.tags) r.tags[k] = this.tags[k].slice(); return r; };
   Run.prototype.liveExplosives = function () { var o = []; for (var k in this.tags) { var t = this.tags[k]; if (t[2] && (t[0] === 'En_Bom' || t[0] === 'En_Bom_Chu')) o.push(k); } return o; };
   Run.prototype.apply = function (list) {
     for (var i = 0; i < list.length; i++) {
@@ -867,7 +915,7 @@ var Method = (function () {
       if (it.kind === 'bomb' && it.opt && it.opt.detonator && o.indexOf(it.id + ':end') < iO)
         out.push({ ev: it.id + ':end', msg: it.name + ' is the bomb you backflip into, so it has to still be exploding at Spawn OI bomb. Move “' + evText(m, it.id + ':end') + '” after it.' });
     });
-    return out;
+    return out.concat(chuProblems(m, o));
   }
   function analyse(m, opts) {
     opts = opts || {};
@@ -1004,7 +1052,7 @@ var Method = (function () {
     function key(r, rem) {
       var tg = Object.keys(r.tags).filter(function (k) { return r.tags[k][2]; }).sort().map(function (k) { return k + '=' + r.tags[k][1].toString(36); }).join(',');
       // layout-only memo (stale bytes ignored for speed); every result is re-checked exactly afterwards
-      return (r.primed ? 'P' : '') + r.h.layoutKey() + '|' + tg + '|' + rem.slice().sort().join(' ');
+      return (r.primed ? 'P' : '') + r.h.layoutKey() + '|' + tg + '|' + rem.slice().sort().join(' ') + '|' + chuKey(r.cs);
     }
     var chuPrime = (m.prime || 'chu') === 'chu';
     // a fish that dies on its own timer keeps its side of the OI bomb (its timing is fixed by the 400-update timer)
@@ -1047,8 +1095,9 @@ var Method = (function () {
         if (lockPost[ev]) continue;
         if (isPress(m, ev) && r.liveExplosives().length >= 3) continue;
         var canPrime = chuPrime && !r.primed && /:pop$/.test(ev) && r.liveExplosives().length === 2;
+        var cs2 = chuStep(m, r.cs, ev); if (!cs2) continue; // bombchu timing rules
         var r2 = r.clone(); if (r2.apply(ops(m, ev))) continue;
-        r2.primed = r.primed;
+        r2.primed = r.primed; r2.cs = cs2;
         var rest = rem.slice(0, i).concat(rem.slice(i + 1));
         var sub = dfs(r2, rest);
         for (var j = 0; j < sub.length && out.length < CAP; j++) out.push({ pre: [ev].concat(sub[j].pre), post: sub[j].post });
@@ -1130,7 +1179,7 @@ var Method = (function () {
     var memo = new Set(), hits = [];
     function key(r, si, ci) {
       var tg = Object.keys(r.tags).filter(function (k) { return r.tags[k][2]; }).sort().map(function (k) { return k + '=' + r.tags[k][1].toString(36); }).join(',');
-      return r.h.layoutKey() + '|' + tg + '|' + si + '|' + ci.join(',');
+      return r.h.layoutKey() + '|' + tg + '|' + si + '|' + ci.join(',') + '|' + chuKey(r.cs);
     }
     function endOptions(ev, it) { // where an end still open at the OI may go: post (before the donor) or never (outlives the donor)
       if (isAction(m, ev) || /:start$/.test(ev)) return [];
@@ -1166,7 +1215,7 @@ var Method = (function () {
         pp = hookEnds.concat(pp);
         var rG = null, permsG = null, ppG = null;
         if (primeFade && post.indexOf(primeFade) >= 0) {
-          rG = r.clone(); if (rG.apply(ops(m, primeFade))) rG = null;
+          rG = r.clone(); if (!chuStep(m, r.cs, primeFade) || rG.apply(ops(m, primeFade))) rG = null;
           else { var postG = post.filter(function (e) { return e !== primeFade; }).concat(['B:end']); permsG = permutations(postG, MAXPERM).map(function (pm) { return hookEnds.concat(pm); }); ppG = hookEnds.concat(postG); }
         }
         function works(st, pl, d) {
@@ -1198,7 +1247,9 @@ var Method = (function () {
         if (ev === popEv && r.liveExplosives().length !== 2) continue;
         if (j >= 0 && isAction(m, ev) && si > lockAt) continue;
         if (j >= 0 && si === SK.length && isAction(m, ev)) continue;
+        var cs2 = chuStep(m, r.cs, ev); if (!cs2) continue; // bombchu timing rules
         var r2 = r.clone(); if (r2.apply(ops(m, ev))) continue;
+        r2.cs = cs2;
         var ci2 = ci.slice(); if (j >= 0) ci2[j]++;
         var seq2 = seq.concat([ev]), bad = false;
         if (isChange(m, ev)) chains.forEach(function (ch, q) { // a live hookshot is put away right after this item appears
@@ -1281,6 +1332,7 @@ var Method = (function () {
   }
   function bottlesOk(items, order, donor, bottles) { return !!bottlePlan(items, order, donor, bottles); }
   function solveFeasible(items, order, coreFirst, donor, bottles, gaps) {
+    if (chuProblems({ items: items }, order).length) return false; // bombchu timing rules
     if (bottles && !bottlesOk(items, order, donor, bottles)) return false;
     // an added bombchu's blast lasts ~12 updates of unfrozen time (bottle drops and catches pause it):
     // at most one quick press inside it, no bomb that is placed and explodes inside it, no long wait (gaps) inside it
@@ -1598,7 +1650,7 @@ var Method = (function () {
   function setSnapshot(s, names) { SNAP = s; SCENE_NAMES = {}; for (var k in (names || {})) SCENE_NAMES[+k] = names[k]; }
   return { ADD: ADD, addCombos: addCombos, solveCombo: solveCombo, solveNotes: solveNotes, solveRisk: solveRisk, solveFeasible: solveFeasible, isChange: isChange, isCatch: isCatch, bottlesOk: bottlesOk, bottlePlan: bottlePlan, KINDS: KINDS, LIFE: LIFE, setSnapshot: setSnapshot, analyse: analyse, relevance: relevance, explain: explain, timing: timing,
     search: search, rules: rules, isAction: isAction, evText: evText, eventsOf: eventsOf, itemOf: itemOf, phases: phases, nameOfTag: nameOfTag, holderAt: holderAt,
-    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack };
+    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack, chuProblems: chuProblems };
 })();
 
 
