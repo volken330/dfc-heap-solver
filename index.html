@@ -1121,6 +1121,10 @@ var Method = (function () {
     var SK = o.slice(0, iO).filter(function (e) { return e !== '@prime'; });
     var popEv = o[iP - 1];
     var corePost = o.slice(iO + 1, iD).filter(function (e) { return e !== 'B:end'; });
+    // The priming bombchu's blast lasts ~12 updates after the pop. Whether it is still out when the OI bomb is pulled is
+    // a timing detail, so every result is checked both ways: ec = 'any' (doesn't matter), 'alive' or 'gone'.
+    var primeFade = popEv ? evSplit(popEv)[0] + ':fade' : null;
+    if (corePost.indexOf(primeFade) < 0) primeFade = null;
     var lockAt = core.lock ? SK.indexOf(core.lock) : SK.length; // extra actions are not allowed once this core event is placed
     var chains = extra.map(function (it) { return eventsOf(it); });
     var memo = new Set(), hits = [];
@@ -1160,12 +1164,23 @@ var Method = (function () {
         rem.forEach(function (x, k) { (x.op[choice[k]] === 'never' ? never : post).push(x.ev); });
         var pp = post.concat(['B:end']), perms = permutations(pp, MAXPERM).map(function (pm) { return hookEnds.concat(pm); });
         pp = hookEnds.concat(pp);
-        donors.forEach(function (d) {
-          m.donor = d; var good = true, f0 = null;
-          for (var p = 0; p < perms.length; p++) { var f = finish(m, r.clone(), perms[p], false); if (f.error || !f.hit) { good = false; break; } f0 = f0 || f; }
+        var rG = null, permsG = null, ppG = null;
+        if (primeFade && post.indexOf(primeFade) >= 0) {
+          rG = r.clone(); if (rG.apply(ops(m, primeFade))) rG = null;
+          else { var postG = post.filter(function (e) { return e !== primeFade; }).concat(['B:end']); permsG = permutations(postG, MAXPERM).map(function (pm) { return hookEnds.concat(pm); }); ppG = hookEnds.concat(postG); }
+        }
+        function works(st, pl, d) {
+          var f0 = null;
+          for (var p = 0; p < pl.length; p++) { var f = finish(m, st.clone(), pl[p], false); if (f.error || !f.hit) return null; f0 = f0 || f; }
           // a song is played while everything but the held OI bomb is frozen, so it must also work with only B gone
-          if (good && DONOR[d] && DONOR[d].song) { var fs = finish(m, r.clone(), hookEnds.concat(['B:end']), false); if (fs.error || !fs.hit) good = false; }
-          if (good) hits.push({ order: seq.concat(['@prime', '@oi'], pp, ['@donor'], never), donor: d, B: f0.B, word: f0.word });
+          if (DONOR[d] && DONOR[d].song) { var fs = finish(m, st.clone(), hookEnds.concat(['B:end']), false); if (fs.error || !fs.hit) return null; }
+          return f0;
+        }
+        donors.forEach(function (d) {
+          m.donor = d;
+          var fA = works(r, perms, d), fG = rG ? works(rG, permsG, d) : null;
+          if (fA) hits.push({ order: seq.concat(['@prime', '@oi'], pp, ['@donor'], never), donor: d, B: fA.B, word: fA.word, ec: !primeFade ? 'any' : fG ? 'any' : 'alive' });
+          else if (fG) hits.push({ order: seq.concat(['@prime', primeFade, '@oi'], ppG, ['@donor'], never), donor: d, B: fG.B, word: fG.word, ec: 'gone' });
         });
       })(0);
     }
@@ -1408,29 +1423,37 @@ var PRESETS = [
       { label: 'bottled fish, dropped after the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
-        order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } }
+        order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
+      { label: 'bottled fish, dropped before the bombchu', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
+        order: ['f:start', 'c:start', 'x:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
+      { label: 'bottled bugs, released before the bombchu', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+        { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+        { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
+        order: ['b:start', 'c:start', 'x:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } }
     ] },
   { name: 'Fish chu',
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
       { id: 'c', kind: 'chu', name: 'Bombchu' }, { id: 'g', kind: 'fish', name: 'Path fish', opt: { end: 'die' } }],
       order: ['x:start', 'f:start', 'c:start', 'f:end', 'g:start', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor'] } },
-  { name: 'Bomb-triggered chu method',
+  { name: 'Bomb-triggered chu method', hidden: true,
     method: { donor: 'fish', prime: 'chu', lock: 'c:start', items: [
       { id: 'w', kind: 'bomb', name: 'Hole bomb' }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
       { id: 'c', kind: 'chu', name: 'Bombchu' }],
       order: ['w:start', 'f:start', 'c:start', 'f:end', 'c:pop', '@prime', '@oi', 'w:end', 'c:fade', 'B:end', '@donor'] } },
-  { name: 'Chu-prime run-in (detonator bomb)',
+  { name: 'Chu-prime run-in (detonator bomb)', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
       { id: 'c', kind: 'chu', name: 'Priming bombchu' }],
       order: ['x:start', 'f:start', 'c:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
-  { name: 'Dupe fish (bombchu pops on the floor fish)',
+  { name: 'Dupe fish (bombchu pops on the floor fish)', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'g', kind: 'fish', name: 'Dupe-drop fish', opt: { end: 'die' } },
       { id: 'f', kind: 'fish', name: 'Real-drop fish', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Priming bombchu' }],
       order: ['x:start', 'g:start', 'f:start', 'c:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor'] } },
-  { name: 'Double chu',
+  { name: 'Double chu', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }, { id: 'k', kind: 'chu', name: 'Bombchu 1' },
       { id: 'c', kind: 'chu', name: 'Bombchu 2' }],
@@ -1731,7 +1754,7 @@ var Swap = (function () {
   'use strict';
   var coreSrc = document.getElementById('core-src').textContent;
   var mods = new Function(coreSrc + '\n;return { HeapEngine: HeapEngine, Method: typeof Method !== \'undefined\' ? Method : null, PRESETS: typeof PRESETS !== \'undefined\' ? PRESETS : null, Swap: Swap };')();
-  var E = mods.HeapEngine, M = mods.Method, PRESETS = mods.PRESETS, hex = E.hex;
+  var E = mods.HeapEngine, M = mods.Method, PRESETS = (mods.PRESETS || []).filter(function (p) { return !p.hidden; }), hex = E.hex;
   var DATA = JSON.parse(document.getElementById('snapdata').textContent);
   var SNAP = new E.Snapshot(DATA);
   if (M) M.setSnapshot(SNAP, DATA.names);
@@ -1876,6 +1899,8 @@ var Swap = (function () {
       });
       r.hits.forEach(function (h) {
         h.notes = M.solveNotes(r.items, h.order);
+        if (h.ec === 'alive') h.notes.unshift('Bombchu blast timing: the bombchu’s blast must still be out when you pull the OI bomb (pull it within ~10 updates of the pop).');
+        else if (h.ec === 'gone') h.notes.unshift('Bombchu blast timing: the bombchu’s blast must be gone when you pull the OI bomb (pull it 12+ updates after the pop).');
         // how much the added steps are mixed into the method's own steps (0 = all done as setup first)
         var firstCore = h.order.indexOf(core.order[0]), oi = h.order.indexOf('@oi');
         h.mix = h.order.slice(firstCore, oi).filter(function (e) { return e[0] !== '@' && /^x\d/.test(e); }).length;
@@ -1884,11 +1909,12 @@ var Swap = (function () {
         (by[h.donor] = by[h.donor] || []).push(h);
       });
       for (var d in by) {
-        var hs = by[d].sort(function (a, b) { return a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
+        var hs = by[d].sort(function (a, b) { return (a.ec !== 'any') - (b.ec !== 'any') || a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
         oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0 });
       }
     });
-    oiGroups.sort(function (a, b) { return a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
+    // results where the bombchu blast timing doesn't matter come first
+    oiGroups.sort(function (a, b) { return (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
     $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText() + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
     function steps(g, h) {
@@ -1900,7 +1926,7 @@ var Swap = (function () {
     $('oi-results').innerHTML = oiGroups.length ? oiGroups.map(function (g, gi) {
       var h = g.best, more = g.hits.slice(1, 40);
       return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + esc(donorName(g.donor)) + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
-        '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
+        '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + (h.ec === 'any' ? ' &middot; <b>bombchu blast timing doesn’t matter</b>' : '') + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
         '<div class="oisteps">' + steps(g, h) + '</div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
         '<div><button class="btn small" type="button" data-oishow="' + gi + ':0">Show</button></div>' +
