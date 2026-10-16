@@ -260,9 +260,9 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
       <details class="how" hidden>
         <summary>How this works</summary>
         <div>
-          <p>After the OI, the game reads the OI bomb&rsquo;s damage type from memory the bomb no longer owns: the spot 0x1A8 bytes into where the bomb used to be. Whatever has been loaded there by then decides the damage. When the donor fish&rsquo;s code loads just below the OI bomb&rsquo;s old spot, the word there is <code>E4AC00BC</code>, which has the hammer bit.</p>
+          <p>After the OI, the game reads the OI bomb&rsquo;s damage type from memory the bomb no longer owns: the spot 0x1A8 bytes into where the bomb used to be. Whatever has been loaded there by then decides the damage. When the damage-overwriter fish&rsquo;s code loads just below the OI bomb&rsquo;s old spot, the word there is <code>E4AC00BC</code>, which has the hammer bit.</p>
           <p>Where things land in memory depends only on the <b>order</b> in which things appear and disappear, not on exact frames. So you describe your method as an ordered list. Anything that ends after you pull the OI bomb is out of your hands, so the page tries every order those endings could happen in.</p>
-          <p>Two places matter: the gap Volvagia&rsquo;s hole platform leaves behind (it must be full enough that the OI bomb doesn&rsquo;t fall into it), and the start of the main free area, where the OI bomb should land right after one bomb-sized block that is gone before the donor comes out.</p>
+          <p>Two places matter: the gap Volvagia&rsquo;s hole platform leaves behind (it must be full enough that the OI bomb doesn&rsquo;t fall into it), and the start of the main free area, where the OI bomb should land right after one bomb-sized block that despawns before the damage overwriter.</p>
           <p class="hint" id="engine-note"></p>
         </div>
       </details>
@@ -277,7 +277,7 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
         <div class="field" style="flex:2 1 220px"><label for="preset">Method</label><select id="preset"></select></div>
         <div class="field" hidden><label for="prime">Prime</label>
           <select id="prime"><option value="chu">Bombchu pop</option><option value="other">Other (not checked)</option></select></div>
-        <div class="field" hidden><label for="donor">Donor after the ocarina</label>
+        <div class="field" hidden><label for="donor">Damage overwritten by</label>
           <select id="donor"><option value="fish">Fish</option><option value="bugs">Bugs</option></select></div>
       </div>
       <p class="hint" id="preset-src" hidden></p>
@@ -288,7 +288,7 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
           <div><b>Bottles</b><br><label>Number <select id="oi-nbot"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></label>
             <label title="With equip swap a drop doesn’t empty the bottle. Without it, an emptied bottle has to catch something to be used again."><input type="checkbox" id="oi-dupe"> Equip swap</label></div>
           <div><b>Bottled items</b><br><label><input type="checkbox" data-oibot="fish" checked> Fish</label> <label><input type="checkbox" data-oibot="bugs" checked> Bugs</label> <label><input type="checkbox" data-oibot="fairy"> Fairy</label> <label><input type="checkbox" data-oibot="bfire"> Blue fire</label></div>
-          <div><b>Songs</b> <span class="hint">(only as the donor, played on the OI ocarina)</span><br><label><input type="checkbox" data-oisong="song_zelda"> Zelda’s Lullaby</label> <label><input type="checkbox" data-oisong="song_epona"> Epona’s Song</label> <label><input type="checkbox" data-oisong="song_saria"> Saria’s Song</label> <label><input type="checkbox" data-oisong="song_sun"> Sun’s Song</label> <label><input type="checkbox" data-oisong="song_time"> Song of Time</label> <label><input type="checkbox" data-oisong="song_storms"> Song of Storms</label></div>
+          <div><b>Songs</b> <span class="hint">(only as the damage overwriter, played on the OI ocarina)</span><br><label><input type="checkbox" data-oisong="song_zelda"> Zelda’s Lullaby</label> <label><input type="checkbox" data-oisong="song_epona"> Epona’s Song</label> <label><input type="checkbox" data-oisong="song_saria"> Saria’s Song</label> <label><input type="checkbox" data-oisong="song_sun"> Sun’s Song</label> <label><input type="checkbox" data-oisong="song_time"> Song of Time</label> <label><input type="checkbox" data-oisong="song_storms"> Song of Storms</label></div>
           <div><label for="oi-max">Max things added</label><br><select id="oi-max"><option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></div>
         </div></div>
         <div><button class="btn calc" type="button" id="oi-calc">Solve</button> <button class="btn ghost" type="button" id="oi-stop" hidden>Stop</button> <span class="status" id="oi-status"></span></div>
@@ -630,25 +630,25 @@ var Method = (function () {
 
   var KINDS = {
     bomb: { label: 'Bomb', actor: 'En_Bom', parts: ['start', 'end'], explosive: true,
-      text: { start: 'Place {n}', end: '{n} explodes and fades' } },
+      text: { start: 'Spawn {n}', end: '{n} explodes and fades' } },
     chu: { label: 'Bombchu', actor: 'En_Bom_Chu', parts: ['start', 'pop', 'fade'], explosive: true,
-      text: { start: 'Send {n}', pop: '{n} pops', fade: '{n}’s blast fades' } },
+      text: { start: 'Spawn {n}', pop: '{n} explodes and spawns bomb', fade: '{n} explosion fades' } },
     fish: { label: 'Fish', actor: 'En_Fish', parts: ['start', 'end'],
-      text: { start: 'Drop {n} from the bottle', end: { catch: 'Catch {n}', die: '{n} dies on the floor' } } },
+      text: { start: 'Spawn {n}', end: { catch: 'Destroy {n}', die: '{n} despawns' } } },
     bugs: { label: 'Bugs', actor: 'En_Insect', parts: ['start', 'end'],
-      text: { start: 'Release {n} (3 bugs)', end: '{n} dig away' } },
+      text: { start: 'Spawn {n}', end: '{n} despawn' } },
     arrow: { label: 'Arrow', actor: 'En_Arrow', parts: ['start', 'end'],
-      text: { start: 'Ready the bow ({n} appears)', end: '{n} disappears' } },
+      text: { start: 'Spawn {n}', end: '{n} despawns' } },
     hook: { label: 'Hookshot', actor: 'Arms_Hook', parts: ['start', 'end'],
-      text: { start: 'Take out the hookshot ({n})', end: '{n} is put away (by the next item you draw)' } },
+      text: { start: 'Spawn {n}', end: '{n} despawns' } },
     bugsc: { label: 'Bugs', actor: 'En_Insect', parts: ['start', 'catch', 'end'],
-      text: { start: 'Release {n} (3 bugs)', catch: 'Catch one of {n}', end: 'The other two of {n} dig away' } },
+      text: { start: 'Spawn {n}', catch: 'Destroy 1 of {n}', end: 'Other 2 of {n} despawn' } },
     fairy: { label: 'Fairy', actor: 'En_Elf', parts: ['start', 'end'],
-      text: { start: 'Release {n} from the bottle', end: '{n} flies off and disappears' } },
+      text: { start: 'Spawn {n}', end: '{n} despawns' } },
     nut: { label: 'Deku nut', actor: 'En_Arrow', parts: ['start', 'pop', 'fade'],
-      text: { start: 'Throw {n}', pop: '{n} hits something and flashes', fade: '{n}’s flash fades' } },
+      text: { start: 'Spawn {n}', pop: '{n} despawns, {n} flash spawns', fade: '{n} flash despawns' } },
     bfire: { label: 'Blue fire', actor: 'En_Ice_Hono', parts: ['start', 'end'],
-      text: { start: 'Drop {n} from the bottle', end: '{n} burns out' } }
+      text: { start: 'Spawn {n}', end: '{n} despawns' } }
   };
   // Bottled items. A dropped blue fire lands ~18 updates after it appears, spawns 8 small flames, then 10 more 14 updates
   // later (z_en_ice_hono.c); all 19 are out by the end of the drop animation and all are gone ~60–78 updates after it
@@ -676,12 +676,12 @@ var Method = (function () {
   // ---- lifetimes for the optional timing check (updates; from the notes and decomp) ----
   var LIFE = {
     bomb: { max: 81, why: 'a bomb explodes 70 updates after it’s placed (sooner if something sets it off) and its explosion lasts about 11 more' },
-    chuPop: { max: 120, why: 'a bombchu pops on its 120-update timer if it hasn’t hit anything' },
-    chuFade: { max: 12, why: 'a bombchu’s blast lasts about 12 updates' },
+    chuPop: { max: 120, why: 'a bombchu explodes on its 120-update timer if it hasn’t hit anything' },
+    chuFade: { max: 12, why: 'a bombchu explosion lasts about 12 updates' },
     fish: { max: 400, why: 'a dropped fish dies 400 updates after it lands (it blinks for the last 60)' },
-    bugs: { max: 200, why: 'bugs start digging away 200–239 updates after release' },
-    fairy: { min: 100, max: 125, why: 'a released fairy is gone about 100–125 updates after it appears' },
-    bfire: { min: 62, max: 78, why: 'dropped blue fire is gone about 60–78 updates after it appears' },
+    bugs: { max: 200, why: 'bugs start despawning 200–239 updates after they spawn' },
+    fairy: { min: 100, max: 125, why: 'a fairy despawns about 100–125 updates after it spawns' },
+    bfire: { min: 62, max: 78, why: 'blue fire despawns about 60–78 updates after it spawns' },
     arrow: { floor: 72, volvagia: 62, wall: 32, why: { floor: 'a bow arrow stuck in the floor lasts 60 updates (plus ~12 in flight)', volvagia: 'an arrow bounced off Volvagia’s face lasts 50 updates after the hit (plus ~12 in flight)', wall: 'an arrow stuck in a wall lasts 20 updates (plus ~12 in flight)' } }
   };
 
@@ -689,10 +689,10 @@ var Method = (function () {
   function evSplit(ev) { var k = ev.indexOf(':'); return [ev.slice(0, k), ev.slice(k + 1)]; }
   function evText(m, ev) {
     if (ev === '@prime') return 'The prime (the bombs press is refused)';
-    if (ev === '@oi') return 'Backflip, pull out the OI bomb';
-    if (ev === '@donor') return donorOf(m).song ? 'Play ' + donorOf(m).text + ' on that ocarina (the donor)' : 'After the ocarina, ' + donorOf(m).verb + ' the donor ' + donorOf(m).text;
+    if (ev === '@oi') return 'Spawn OI bomb';
+    if (ev === '@donor') return 'Spawn ' + donorOf(m).text + (donorOf(m).song ? ' effect' : '') + ' (damage overwriter)';
     var p = evSplit(ev), it = itemOf(m, p[0]);
-    if (it === OI) return 'The OI bomb explodes and fades';
+    if (it === OI) return 'OI bomb explodes and fades';
     var t = KINDS[it.kind].text[p[1]];
     if (typeof t === 'object') t = t[(it.opt && it.opt.end) || 'catch'];
     return t.replace('{n}', it.name);
@@ -786,7 +786,7 @@ var Method = (function () {
       if (keepStates) steps.push({ ev: ev, state: r.clone() });
     }
     var liveOI = r.liveExplosives();
-    if (liveOI.length >= 3) problems.push({ ev: '@oi', msg: 'The OI bomb can’t be pulled: three bombs, bombchus or blasts are already out (' + liveOI.map(function (t) { return nameOfTag(m, t); }).join(', ') + ').' });
+    if (liveOI.length >= 3) problems.push({ ev: '@oi', msg: 'The OI bomb can’t spawn: three bombs, bombchus or blasts are already out (' + liveOI.map(function (t) { return nameOfTag(m, t); }).join(', ') + ').' });
     return { run: r, problems: problems, steps: steps };
   }
   function finish(m, r, post, labels) {
@@ -799,11 +799,11 @@ var Method = (function () {
   }
   function nameOfTag(m, tag) {
     if (tag === 'B') return 'the OI bomb';
-    if (/^donor/.test(tag)) return 'the donor ' + donorOf(m).text;
+    if (/^donor/.test(tag)) return 'the damage overwriter (' + donorOf(m).text + ')';
     var id = tag.split('.')[0], it = itemOf(m, id);
     if (!it) return tag;
-    if (/\.blast$/.test(tag)) return it.name + '’s blast';
-    if (/\.flash$/.test(tag)) return it.name + '’s flash';
+    if (/\.blast$/.test(tag)) return it.name + ' explosion';
+    if (/\.flash$/.test(tag)) return it.name + ' flash';
     return it.name;
   }
   var MAXPERM = 5040;
@@ -845,27 +845,27 @@ var Method = (function () {
     var o = m.order, iP = o.indexOf('@prime'), iO = o.indexOf('@oi'), out = [];
     // the caught bottle has to be in hand for the cutscene press after the backflip: the last item draw before the prime is a catch
     for (var lc = iP - 1; lc >= 0; lc--) if (isChange(m, o[lc])) break;
-    if (lc >= 0 && !isCatch(m, o[lc])) out.push({ ev: o[lc], msg: 'The last thing you take out before the prime has to be a bottle catch (so the bottle is in hand for the OI). “' + evText(m, o[lc]) + '” comes after the last catch.' });
+    if (lc >= 0 && !isCatch(m, o[lc])) out.push({ ev: o[lc], msg: 'The last item drawn before the prime has to be the bottle (Destroy a fish or bugs), so the bottle is in hand for the OI. “' + evText(m, o[lc]) + '” comes after it.' });
     // the hookshot is put away at the next item draw, right after that item appears
     m.items.forEach(function (it) {
       if (it.kind !== 'hook') return;
       var is = o.indexOf(it.id + ':start'), ie = o.indexOf(it.id + ':end');
       for (var nx = is + 1; nx < o.length && !isChange(m, o[nx]); nx++);
-      if (ie !== nx + 1) out.push({ ev: it.id + ':end', msg: it.name + ' is put away by the next item draw (“' + evText(m, o[nx] || '@oi') + '”), right after it appears.' });
+      if (ie !== nx + 1) out.push({ ev: it.id + ':end', msg: it.name + ' despawns at the next item draw (“' + evText(m, o[nx] || '@oi') + '”), right after that spawns.' });
     });
-    if (iP > iO) out.push({ ev: '@prime', msg: 'The prime has to come before you pull the OI bomb.' });
-    for (var i = iP + 1; i < iO; i++) if (isAction(m, o[i])) out.push({ ev: o[i], msg: '“' + evText(m, o[i]) + '” is between the prime and the OI bomb, while you’re running in and backflipping. Move it before the prime.' });
+    if (iP > iO) out.push({ ev: '@prime', msg: 'The prime has to come before Spawn OI bomb.' });
+    for (var i = iP + 1; i < iO; i++) if (isAction(m, o[i])) out.push({ ev: o[i], msg: '“' + evText(m, o[i]) + '” is between the prime and Spawn OI bomb, while you’re running in and backflipping. Move it before the prime.' });
     if ((m.prime || 'chu') === 'chu' && iP > 0) {
       var prev = o[iP - 1], it = prev[0] !== '@' ? itemOf(m, evSplit(prev)[0]) : null;
-      if (!it || it.kind !== 'chu' || evSplit(prev)[1] !== 'pop') out.push({ ev: '@prime', msg: 'For a bombchu prime, put the prime right after the bombchu pop it uses.' });
+      if (!it || it.kind !== 'chu' || evSplit(prev)[1] !== 'pop') out.push({ ev: '@prime', msg: 'For a bombchu prime, put the prime right after the bombchu it uses explodes.' });
       else {
         var live = liveBefore(m, iP - 1);
-        if (live.length !== 2) out.push({ ev: '@prime', msg: 'A bombchu prime needs exactly two explosives out when you press (the bombchu and one more), so its pop makes three. Here there are ' + live.length + (live.length ? ' (' + live.map(function (t) { return nameOfTag(m, t); }).join(', ') + ')' : '') + '.' });
+        if (live.length !== 2) out.push({ ev: '@prime', msg: 'A bombchu prime needs exactly two explosives out when you press (the bombchu and one more), so its explosion makes three. Here there are ' + live.length + (live.length ? ' (' + live.map(function (t) { return nameOfTag(m, t); }).join(', ') + ')' : '') + '.' });
       }
-    } else if ((m.prime || 'chu') === 'chu' && iP === 0) out.push({ ev: '@prime', msg: 'For a bombchu prime, put the prime right after the bombchu pop it uses.' });
+    } else if ((m.prime || 'chu') === 'chu' && iP === 0) out.push({ ev: '@prime', msg: 'For a bombchu prime, put the prime right after the bombchu it uses explodes.' });
     m.items.forEach(function (it) {
       if (it.kind === 'bomb' && it.opt && it.opt.detonator && o.indexOf(it.id + ':end') < iO)
-        out.push({ ev: it.id + ':end', msg: it.name + ' is the bomb you backflip into, so it has to still be exploding when you pull the OI bomb. Move its end after the OI bomb.' });
+        out.push({ ev: it.id + ':end', msg: it.name + ' is the bomb you backflip into, so it has to still be exploding at Spawn OI bomb. Move “' + evText(m, it.id + ':end') + '” after it.' });
     });
     return out;
   }
@@ -935,18 +935,18 @@ var Method = (function () {
     var below = prev ? holderAt(m, st, prev) : null;
     var inHole = B >= HOLE_LO && B < HOLE_HI;
     if (inHole) {
-      out.push('The OI bomb landed in the gap left by Volvagia’s hole platform. A bomb takes 0x230 bytes there, and when you pulled it that gap still had a free piece big enough.');
+      out.push('The OI bomb landed in the gap left by Volvagia’s hole platform. A bomb takes 0x230 bytes there, and when it spawned that gap still had a free piece big enough.');
     } else {
       out.push('The OI bomb landed in the main free area' + (below ? ', right after ' + below.name : '') + '.');
     }
     var d = c.atDonor, fishCode = d.h.ovl.En_Fish[0];
     var srcTxt = plainSource(m, c.src);
-    out.push('When the donor came out, the word under the OI bomb (bomb + 0x1A8) was ' + hex(c.word) + ', from ' + srcTxt + '. ' +
+    out.push('When the damage overwriter spawned, the word under the OI bomb (bomb + 0x1A8) was ' + hex(c.word) + ', from ' + srcTxt + '. ' +
       (c.hit ? 'It has a hammer bit, so the hit counts as hammer damage.' : 'It has no hammer bit.'));
     if (!c.hit) {
-      if (inHole) out.push('Fix: keep more things alive in that gap when you pull the OI bomb, so no free piece of it is 0x230 or bigger.');
+      if (inHole) out.push('Fix: keep more things alive in that gap at Spawn OI bomb, so no free piece of it is 0x230 or bigger.');
       else if (m.donor === 'fish' && fishCode && fishCode !== B - 0x230) {
-        out.push('The working layouts have exactly one bomb-sized block directly below the OI bomb that is gone before the donor, so the donor’s fish code loads starting there and its word E4AC00BC sits under the OI bomb. Here the fish code loaded at ' + hex(fishCode) + '; it needed to start at ' + hex(B - 0x230) + '.');
+        out.push('The working layouts have exactly one bomb-sized block directly below the OI bomb that despawns before the damage overwriter, so the overwriter fish’s code loads starting there and its word E4AC00BC sits under the OI bomb. Here the fish code loaded at ' + hex(fishCode) + '; it needed to start at ' + hex(B - 0x230) + '.');
       }
     }
     return out;
@@ -966,8 +966,8 @@ var Method = (function () {
       var id = it.id, d;
       if (it.kind === 'bomb' && (d = dt(id + ':start', id + ':end')) !== null && d > LIFE.bomb.max) warn.push({ ev: id + ':end', msg: it.name + ' lasts ' + d + ' updates, but ' + LIFE.bomb.why + '.' });
       if (it.kind === 'chu') {
-        if ((d = dt(id + ':start', id + ':pop')) !== null && d > LIFE.chuPop.max) warn.push({ ev: id + ':pop', msg: it.name + ' pops ' + d + ' updates after it’s sent, but ' + LIFE.chuPop.why + '.' });
-        if ((d = dt(id + ':pop', id + ':fade')) !== null && d > LIFE.chuFade.max) warn.push({ ev: id + ':fade', msg: it.name + '’s blast lasts ' + d + ' updates, but ' + LIFE.chuFade.why + '.' });
+        if ((d = dt(id + ':start', id + ':pop')) !== null && d > LIFE.chuPop.max) warn.push({ ev: id + ':pop', msg: it.name + ' explodes ' + d + ' updates after it spawns, but ' + LIFE.chuPop.why + '.' });
+        if ((d = dt(id + ':pop', id + ':fade')) !== null && d > LIFE.chuFade.max) warn.push({ ev: id + ':fade', msg: it.name + ' explosion lasts ' + d + ' updates, but ' + LIFE.chuFade.why + '.' });
       }
       if (it.kind === 'fish' && (d = dt(id + ':start', id + ':end')) !== null) {
         if ((it.opt && it.opt.end) === 'die') { if (Math.abs(d - LIFE.fish.max) > 2) warn.push({ ev: id + ':end', msg: it.name + ' dies ' + d + ' updates after the drop, but ' + LIFE.fish.why + '.' }); }
@@ -1221,27 +1221,9 @@ var Method = (function () {
     return { adds: adds, items: items, hits: out, stopped: stopped, nodes: nodes, ms: Date.now() - t0 };
   }
   // timing notes for one hit (the heap doesn’t care about time; these are what the order asks of you)
-  function solveNotes(items, order) {
-    var m = { items: items, order: order }, iO = order.indexOf('@oi'), iD = order.indexOf('@donor'), first = order[0], notes = [];
-    items.forEach(function (it) {
-      var end = it.id + ':end', ie = order.indexOf(end), is = order.indexOf(it.id + ':start');
-      if (it.kind === 'arrow' && ie > iO) notes.push(it.name + ' must still be stuck in the floor when you pull the OI bomb (it lasts 60 updates after it sticks).');
-      if (it.kind === 'fish' && it.opt && it.opt.end === 'die') {
-        if (ie > iO && ie < iD) notes.push(it.name + ' must still be on the floor when you backflip and gone before the donor spawns: backflip between about 1.4 s before it starts blinking and 3 s after.');
-        else if (ie > iD) notes.push(it.name + ' must still be on the floor when the donor spawns (dropped less than about 15 s before the backflip).');
-        else if (ie < iO) notes.push(it.name + ' has to die on its 400-update timer (20 s) before you pull the OI bomb.');
-      }
-      if (it.kind === 'fairy' || it.kind === 'bfire') {
-        if (ie > iO) notes.push(it.name + ' must still be out when you pull the OI bomb and gone before the donor (' + LIFE[it.kind].why + ').');
-        else notes.push(it.name + ' must be gone before “' + evText(m, order[ie + 1]) + '” (' + LIFE[it.kind].why + ').');
-      }
-      if (it.kind === 'bugs' || it.kind === 'bugsc') {
-        if (ie > iO) notes.push(it.name + ' must be gone between the OI and the donor (bugs start digging 200–239 updates after they land and vanish 60 later).');
-        else notes.push(it.name + ' must be gone before “' + evText(m, order[ie + 1]) + '” (bugs start digging 200–239 updates after they land and vanish 60 later).');
-      }
-    });
-    return notes;
-  }
+  // Per-result notes. Kept empty on purpose: when a bottled item, arrow or floor fish must despawn (before the OI
+  // bomb, between it and the damage overwriter, or after) is already shown by where its despawn sits in the order.
+  function solveNotes(items, order) { return []; }
   // Rough timing check (updates). Fish and bugs on the floor age through bottle drops and catches; a catch's textbox can
   // be held to add as much age as you like. A drop takes 120 (the item spawns at 76), a catch 44 plus the textbox.
   // Bottles: can the drops, catches and the donor be done with these bottles (equip-swap dupes keep a bottle full)?
@@ -1408,27 +1390,27 @@ var PRESETS = [
       { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
       order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] },
     variants: [
-      { label: 'bottled bugs, released before the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled bugs spawned before the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
         order: ['c:start', 'b:start', 'x:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } },
-      { label: 'bottled bugs, released after the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled bugs spawned after the first bomb', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
         order: ['c:start', 'x:start', 'b:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } },
-      { label: 'bottled fish, dropped before the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled fish spawned before the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
         order: ['c:start', 'f:start', 'x:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
-      { label: 'bottled fish, dropped after the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled fish spawned after the first bomb', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
         order: ['c:start', 'x:start', 'f:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
-      { label: 'bottled fish, dropped before the bombchu', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled fish spawned before the bombchu', method: { donor: 'fish', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } }],
         order: ['f:start', 'c:start', 'x:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
-      { label: 'bottled bugs, released before the bombchu', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
+      { label: 'bottled bugs spawned before the bombchu', method: { donor: 'bugs', prime: 'chu', gaps: [['c:start', 'x:start']], items: [
         { id: 'c', kind: 'chu', name: 'Long bombchu' }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
         { id: 'b', kind: 'bugsc', name: 'Bottled bugs' }],
         order: ['b:start', 'c:start', 'x:start', 'b:catch', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'b:end', 'B:end', '@donor'] } }
@@ -1800,7 +1782,9 @@ var Swap = (function () {
   // ---------- Bomb + OI: solve (every way to add things so the heap works) ----------
   KC.bugsc = KC.bugs; KC.hook = 'var(--c-other)'; KC.fairy = '#d97fc0'; KC.bfire = '#4aa8e0'; KC.nut = '#b08a4a';
   var OI_KINDS = { bomb: ['bomb'], chu: ['chu'], arrow: ['arrow'], hook: ['hook'], nut: ['nut'], fish: ['fcatch', 'fleft'], bugs: ['bugs', 'bugsc'], fairy: ['fairy'], bfire: ['bfire'] };
-  var ADD_TEXT = { bomb: 'a bomb', chu: 'a bombchu', arrow: 'an arrow in the floor', bugs: 'bugs left to dig away', bugsc: 'bugs (catch one back)', hook: 'a hookshot draw', fcatch: 'a fish you drop and catch again', fleft: 'a fish left on the floor', fairy: 'a fairy released', bfire: 'blue fire dropped', nut: 'a deku nut' };
+  var ADD_TEXT = { bomb: 'bomb', chu: 'bombchu', arrow: 'arrow (floor)', bugs: 'bugs (despawn)', bugsc: 'bugs (destroy 1)', hook: 'hookshot', fcatch: 'fish (destroyed)', fleft: 'fish (despawns)', fairy: 'fairy', bfire: 'blue fire', nut: 'deku nut' };
+  // ec from the solver: 'alive' = the bombchu blast is still out at Spawn OI bomb, 'gone' = it fades first, 'any' = both work
+  var BLAST_AFTER_OI = { alive: 'true', gone: 'false', any: 'doesn’t matter' };
   var BOT_NAME = { fish: 'fish', bugs: 'bugs', fairy: 'fairy', bfire: 'blue fire', empty: 'empty' };
   var oiSt = { allow: { bomb: true, chu: true, arrow: false, hook: true }, bot: { fish: true, bugs: true, fairy: false, bfire: false }, nb: 2, max: 2, dupe: false };
   try { var oiSv = JSON.parse(load('oisolve4') || 'null'); if (oiSv && oiSv.allow && oiSv.bot) oiSt = oiSv; } catch (e) { }
@@ -1876,9 +1860,9 @@ var Swap = (function () {
     });
   });
   function addsTitle(adds) {
-    if (!adds.length) return 'Nothing added';
+    if (!adds.length) return 'No extra items';
     var c = {}; adds.forEach(function (k) { c[k] = (c[k] || 0) + 1; });
-    return 'Add ' + Object.keys(c).map(function (k) { return c[k] > 1 ? c[k] + ' × ' + ADD_TEXT[k] : ADD_TEXT[k]; }).join(', ');
+    return 'Extra items: ' + Object.keys(c).map(function (k) { return c[k] > 1 ? c[k] + ' × ' + ADD_TEXT[k] : ADD_TEXT[k]; }).join(', ');
   }
   var oiGroups = [];
   function showSolve(results) {
@@ -1899,8 +1883,6 @@ var Swap = (function () {
       });
       r.hits.forEach(function (h) {
         h.notes = M.solveNotes(r.items, h.order);
-        if (h.ec === 'alive') h.notes.unshift('Bombchu blast timing: the bombchu’s blast must still be out when you pull the OI bomb (pull it within ~10 updates of the pop).');
-        else if (h.ec === 'gone') h.notes.unshift('Bombchu blast timing: the bombchu’s blast must be gone when you pull the OI bomb (pull it 12+ updates after the pop).');
         // how much the added steps are mixed into the method's own steps (0 = all done as setup first)
         var firstCore = h.order.indexOf(core.order[0]), oi = h.order.indexOf('@oi');
         h.mix = h.order.slice(firstCore, oi).filter(function (e) { return e[0] !== '@' && /^x\d/.test(e); }).length;
@@ -1913,7 +1895,7 @@ var Swap = (function () {
         oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0 });
       }
     });
-    // results where the bombchu blast timing doesn't matter come first
+    // results where it doesn't matter whether the bombchu blast outlasts the OI bomb spawn come first
     oiGroups.sort(function (a, b) { return (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
     $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText() + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
@@ -1925,8 +1907,8 @@ var Swap = (function () {
     }
     $('oi-results').innerHTML = oiGroups.length ? oiGroups.map(function (g, gi) {
       var h = g.best, more = g.hits.slice(1, 40);
-      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + esc(donorName(g.donor)) + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
-        '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + (h.ec === 'any' ? ' &middot; <b>bombchu blast timing doesn’t matter</b>' : '') + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
+      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; damage overwritten by ' + esc(donorName(g.donor)) + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
+        '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + ' &middot; Bombchu blast after OI bomb? <b>' + BLAST_AFTER_OI[h.ec] + '</b>' + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
         '<div class="oisteps">' + steps(g, h) + '</div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
         '<div><button class="btn small" type="button" data-oishow="' + gi + ':0">Show</button></div>' +
@@ -1939,7 +1921,7 @@ var Swap = (function () {
       b.addEventListener('click', function () {
         var p = b.dataset.oishow.split(':'), g = oiGroups[+p[0]], h = g.hits[+p[1]];
         setMethod({ items: g.items, order: h.order, donor: h.donor, prime: 'chu' }, '', true);
-        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + ', donor ' + esc(donorName(g.donor)) + (g.vlabel ? ', ' + esc(g.vlabel) : '') + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
+        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + '; damage overwritten by ' + esc(donorName(g.donor)) + (g.vlabel ? ', ' + esc(g.vlabel) : '') + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
         $('oi-back').addEventListener('click', showCore);
         $('tab-oi').scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
@@ -2020,16 +2002,16 @@ var Swap = (function () {
       var rel = REL[it.id], col = KC[it.kind];
       var opts = '';
       if (it.kind === 'bomb') opts = '<label class="check"><input type="checkbox" data-opt="detonator" data-id="' + it.id + '"' + (it.opt && it.opt.detonator ? ' checked' : '') + '> the bomb you backflip into</label>';
-      if (it.kind === 'fish') opts = '<span>ends by</span><select data-opt="end" data-id="' + it.id + '" aria-label="How ' + esc(it.name) + ' ends"><option value="catch">being caught</option><option value="die"' + (it.opt && it.opt.end === 'die' ? ' selected' : '') + '>dying on the floor</option></select>';
+      if (it.kind === 'fish') opts = '<span>ends by</span><select data-opt="end" data-id="' + it.id + '" aria-label="How ' + esc(it.name) + ' ends"><option value="catch">Destroy (Link)</option><option value="die"' + (it.opt && it.opt.end === 'die' ? ' selected' : '') + '>despawns</option></select>';
       if (it.kind === 'arrow') opts = '<select data-opt="arrow" data-id="' + it.id + '" aria-label="Where ' + esc(it.name) + ' goes"><option value="floor">stuck in the floor</option><option value="volvagia"' + (it.opt && it.opt.arrow === 'volvagia' ? ' selected' : '') + '>bounced off Volvagia</option><option value="wall"' + (it.opt && it.opt.arrow === 'wall' ? ' selected' : '') + '>stuck in a wall</option></select>';
-      if (it.kind === 'chu') opts = '<span class="hint">its pop makes a blast that fades about 12 updates later</span>';
+      if (it.kind === 'chu') opts = '<span class="hint">its explosion fades about 12 updates after it explodes</span>';
       if (it.kind === 'bugs') opts = '<span class="hint">three bugs</span>';
       out.push('<div class="item' + (rel === 'none' ? ' none' : '') + '"><span class="badge" style="background:' + col + '">' + esc(initials(it.name)) + '</span>' +
         '<div style="display:grid;gap:4px;min-width:0"><input type="text" value="' + esc(it.name) + '" data-name="' + it.id + '" aria-label="Name"><div class="opts">' + opts + '</div></div>' +
         '<span class="tagcell">' + (rel === 'none' ? '<span class="tag none" title="Removing it gives the same result">no effect</span>' : rel ? '<span class="tag need" title="Removing it changes the result">matters</span>' : '') + '</span>' +
         '<button class="x" type="button" data-rm="' + it.id + '" title="Remove ' + esc(it.name) + '" aria-label="Remove ' + esc(it.name) + '">&times;</button></div>');
     });
-    out.push('<div class="item"><span class="badge" style="background:' + KC.oi + '">OI</span><div><b>OI bomb</b> <span class="hint">pulled out after the backflip; always part of the trick</span></div><span></span><span></span></div>');
+    out.push('<div class="item"><span class="badge" style="background:' + KC.oi + '">OI</span><div><b>OI bomb</b> <span class="hint">spawned after the backflip; always part of the trick</span></div><span></span><span></span></div>');
     $('items').innerHTML = out.join('');
     $('items').querySelectorAll('[data-rm]').forEach(function (b) { b.addEventListener('click', function () { removeItem(b.dataset.rm); }); });
     $('items').querySelectorAll('[data-name]').forEach(function (inp) {
@@ -2089,7 +2071,7 @@ var Swap = (function () {
       var cells = lanes[i].map(function (c) {
         if (!c) return '<span class="lane"></span>';
         var col = KC[c.it.kind];
-        return '<span class="lane">' + '<i class="' + c.s + (c.blast ? ' blast' : '') + '" style="background:' + col + '"></i>' + (c.mark ? '<b style="background:' + col + '" title="pops"></b>' : '') + '</span>';
+        return '<span class="lane">' + '<i class="' + c.s + (c.blast ? ' blast' : '') + '" style="background:' + col + '"></i>' + (c.mark ? '<b style="background:' + col + '" title="explodes"></b>' : '') + '</span>';
       }).join('');
       var t = timing ? '<span class="t"><input type="number" inputmode="numeric" aria-label="Update for this step" data-t="' + esc(ev) + '" value="' + (m.times[ev] !== undefined && m.times[ev] !== null ? m.times[ev] : '') + '"></span>' : '<span></span>';
       html.push('<div class="' + cls + '">' + t + '<span class="lanes">' + cells + '</span><span class="txt">' + esc(M.evText(m, ev)) + '</span>' +
@@ -2132,7 +2114,7 @@ var Swap = (function () {
     v.className = 'verdict ' + cls;
     v.innerHTML = '<div class="big">' + head + '</div><div class="sub">' + esc(sub) + '</div>' +
       '<div class="sub">Word under the OI bomb: <span class="word">' + hex(c.word) + '</span> at <span class="mono">' + hex(c.B + 0x1A8) + '</span></div>' +
-      '<div class="sub">Donor after the ocarina: <b>' + (m.donor === 'bugs' ? 'bugs' : 'fish') + '</b></div>';
+      '<div class="sub">Damage overwritten by: <b>' + esc(donorName(m.donor)) + '</b></div>';
     mini.className = 'mini ' + cls; mini.textContent = { yes: 'Hammer damage', no: 'No hammer damage', some: 'Some orders only' }[cls];
     // problems
     var probs = (A.problems || []).map(function (p) { return '<li class="err">' + esc(p.msg) + '</li>'; });
@@ -2154,8 +2136,8 @@ var Swap = (function () {
       var who = M.holderAt(m, st, n), col = '', cls = '', lab;
       if (who.kind === 'free') { cls = 'free'; lab = 'free'; }
       else if (who.kind === 'item') {
-        var id = who.tag.split('.')[0], it = who.tag === 'B' ? { kind: 'oi', name: 'OI bomb' } : /^donor/.test(who.tag) ? { kind: m.donor === 'bugs' ? 'bugs' : 'fish', name: 'donor' } : M.itemOf(m, id);
-        col = KC[it ? it.kind : 'bomb'] || 'var(--c-other)'; lab = who.tag === 'B' ? 'OI' : /^donor/.test(who.tag) ? 'donor' : initials(it ? it.name : who.tag) + (/\.blast$/.test(who.tag) ? '•' : '');
+        var id = who.tag.split('.')[0], it = who.tag === 'B' ? { kind: 'oi', name: 'OI bomb' } : /^donor/.test(who.tag) ? { kind: m.donor === 'bugs' ? 'bugs' : 'fish', name: 'damage overwriter' } : M.itemOf(m, id);
+        col = KC[it ? it.kind : 'bomb'] || 'var(--c-other)'; lab = who.tag === 'B' ? 'OI' : /^donor/.test(who.tag) ? 'DO' : initials(it ? it.name : who.tag) + (/\.blast$/.test(who.tag) ? '•' : '');
         if (who.tag === 'B') cls = 'isB';
       } else if (who.kind === 'code') { col = 'var(--c-code)'; lab = who.name.replace(/^the /, ''); }
       else if (who.kind === 'gone') { col = 'var(--c-other)'; lab = '?'; }
@@ -2172,10 +2154,10 @@ var Swap = (function () {
     [c.atB, c.atDonor].forEach(function (st) { for (var t in st.tags) { var a = st.tags[t][1]; if (st.tags[t][2] && a > 0x801F5000 && a < 0x80200000) tailHi = Math.max(tailHi, a + 0x400); } });
     tailHi = Math.min(tailHi, 0x801FC800);
     var B = c.B, html = [];
-    html.push('<h3>At OI bomb pull</h3>');
+    html.push('<h3>At Spawn OI bomb</h3>');
     html.push(blocksPic(c.atB, 0x801EEE90, 0x801EF770, 'Hole'));
     html.push(blocksPic(c.atB, 0x801F4FD0, tailHi, 'Tail'));
-    html.push('<h3>After donor spawn</h3>');
+    html.push('<h3>After the damage overwriter spawns</h3>');
     var inHole = B < 0x801F4FD0;
     html.push(blocksPic(c.atDonor, inHole ? 0x801EEE90 : 0x801F4FD0, inHole ? 0x801EF770 : tailHi, inHole ? 'Hole' : 'Tail', B + 0x1A8));
     html.push('<div class="legend">' + [['bomb', 'bombs'], ['chu', 'bombchus (• = blast)'], ['fish', 'fish'], ['bugs', 'bugs'], ['arrow', 'arrows'], ['oi', 'OI bomb'], ['code', 'loaded code']].map(function (x) { return '<span><i style="background:' + (x[0] === 'code' ? 'var(--c-code)' : KC[x[0]]) + '"></i>' + x[1] + '</span>'; }).join('') + '<span><i style="background:var(--room)"></i>the room</span></div>');
@@ -2190,7 +2172,7 @@ var Swap = (function () {
       rows.push('<tr><td>' + esc(M.evText(m, s.ev)) + '</td><td class="mono">' + esc(made.join(', ')) + '</td></tr>');
     });
     var c = A.canonical;
-    rows.push('<tr><td><b>Pull out the OI bomb</b></td><td class="mono">OI bomb at ' + hex(c.B) + '</td></tr>');
+    rows.push('<tr><td><b>Spawn OI bomb</b></td><td class="mono">OI bomb at ' + hex(c.B) + '</td></tr>');
     var fc = c.atDonor.h.ovl.En_Fish[0];
     $('details').innerHTML = '<table><tr><th>Step (before the OI bomb)</th><th>Lands at</th></tr>' + rows.join('') + '</table>' +
       '<p class="hint" style="margin-top:8px">Word read at <span class="mono">' + hex(c.B + 0x1A8) + '</span> (OI bomb + 0x1A8): <span class="mono">' + hex(c.word) + '</span>, written by <span class="mono">' + esc(c.src || '') + '</span>.' +
@@ -2249,7 +2231,7 @@ var Swap = (function () {
       if (keep[j]) return;
       var prev = j > 0 ? b[j - 1] : null, isNew = base.order.indexOf(e) < 0;
       var where = prev ? 'after “' + M.evText(mm, prev) + '”' : 'first';
-      out.push((isNew ? 'Add: ' : 'Move: ') + '“' + M.evText(mm, e) + '” ' + where + '.');
+      out.push((isNew ? 'Extra item: ' : 'Move: ') + '“' + M.evText(mm, e) + '” ' + where + '.');
     });
     return out;
   }
@@ -2266,7 +2248,7 @@ var Swap = (function () {
     $('find-status').textContent = top.length ? 'Closest versions found (' + (ms / 1000).toFixed(1) + ' s). Each one was re-checked in every ending order.' : 'No working version within one added thing and any reordering of your steps. Try adding something by hand and search again.';
     $('sugs').innerHTML = top.map(function (r, i) {
       var lines = describe(base, r);
-      var title = (r.extra ? 'Add ' + ({ chu: 'a bombchu', bomb: 'a bomb', arrow: 'an arrow', bugs: 'bugs', fish: 'a fish' }[r.extra]) : 'Reorder') + ' · ' + lines.length + ' change' + (lines.length === 1 ? '' : 's');
+      var title = (r.extra ? 'Extra item: ' + ({ chu: 'bombchu', bomb: 'bomb', arrow: 'arrow', bugs: 'bugs', fish: 'fish' }[r.extra]) : 'Reorder') + ' · ' + lines.length + ' change' + (lines.length === 1 ? '' : 's');
       return '<div class="sug"><div class="row" style="justify-content:space-between;align-items:center"><b>' + esc(title) + '</b><span class="mono hint">' + hex(r.word) + '</span></div><ul>' + lines.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul><div><button class="btn ghost" type="button" data-use="' + i + '">Use this version</button></div></div>';
     }).join('');
     $('sugs').querySelectorAll('[data-use]').forEach(function (b) {
