@@ -284,10 +284,11 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
       <div class="oisolve">
         <div class="side"><div class="sidel">
           <div><b>Explosives</b><br><label><input type="checkbox" data-oiallow="bomb" checked> Bombs</label> <label><input type="checkbox" data-oiallow="chu" checked> Bombchus</label></div>
-          <div><b>Equipment</b><br><label><input type="checkbox" data-oiallow="arrow"> Bow</label> <label><input type="checkbox" data-oiallow="hook" checked> Hookshot</label></div>
+          <div><b>Equipment</b><br><label><input type="checkbox" data-oiallow="arrow"> Bow</label> <label><input type="checkbox" data-oiallow="hook" checked> Hookshot</label> <label><input type="checkbox" data-oiallow="nut"> Deku nuts</label></div>
           <div><b>Bottles</b><br><label>Number <select id="oi-nbot"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></label>
             <label title="With equip swap a drop doesn’t empty the bottle. Without it, an emptied bottle has to catch something to be used again."><input type="checkbox" id="oi-dupe"> Equip swap</label></div>
           <div><b>Bottled items</b><br><label><input type="checkbox" data-oibot="fish" checked> Fish</label> <label><input type="checkbox" data-oibot="bugs" checked> Bugs</label> <label><input type="checkbox" data-oibot="fairy"> Fairy</label> <label><input type="checkbox" data-oibot="bfire"> Blue fire</label></div>
+          <div><b>Songs</b> <span class="hint">(only as the donor, played on the OI ocarina)</span><br><label><input type="checkbox" data-oisong="song_zelda"> Zelda’s Lullaby</label> <label><input type="checkbox" data-oisong="song_epona"> Epona’s Song</label> <label><input type="checkbox" data-oisong="song_saria"> Saria’s Song</label> <label><input type="checkbox" data-oisong="song_sun"> Sun’s Song</label> <label><input type="checkbox" data-oisong="song_time"> Song of Time</label> <label><input type="checkbox" data-oisong="song_storms"> Song of Storms</label></div>
           <div><label for="oi-max">Max things added</label><br><select id="oi-max"><option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></div>
         </div></div>
         <div><button class="btn calc" type="button" id="oi-calc">Solve</button> <button class="btn ghost" type="button" id="oi-stop" hidden>Stop</button> <span class="status" id="oi-status"></span></div>
@@ -644,6 +645,8 @@ var Method = (function () {
       text: { start: 'Release {n} (3 bugs)', catch: 'Catch one of {n}', end: 'The other two of {n} dig away' } },
     fairy: { label: 'Fairy', actor: 'En_Elf', parts: ['start', 'end'],
       text: { start: 'Release {n} from the bottle', end: '{n} flies off and disappears' } },
+    nut: { label: 'Deku nut', actor: 'En_Arrow', parts: ['start', 'pop', 'fade'],
+      text: { start: 'Throw {n}', pop: '{n} hits something and flashes', fade: '{n}’s flash fades' } },
     bfire: { label: 'Blue fire', actor: 'En_Ice_Hono', parts: ['start', 'end'],
       text: { start: 'Drop {n} from the bottle', end: '{n} burns out' } }
   };
@@ -656,7 +659,16 @@ var Method = (function () {
     fish: { text: 'fish', verb: 'drop', ops: function () { return [['+', 'donor', 'En_Fish']]; } },
     bugs: { text: 'bugs', verb: 'drop', ops: function () { return [['+', 'donor0', 'En_Insect'], ['+', 'donor1', 'En_Insect'], ['+', 'donor2', 'En_Insect']]; } },
     fairy: { text: 'fairy', verb: 'release', ops: function () { return [['+', 'donor', 'En_Elf']]; } },
-    bfire: { text: 'blue fire', verb: 'drop', ops: function () { return bfireOps('donor'); } }
+    bfire: { text: 'blue fire', verb: 'drop', ops: function () { return bfireOps('donor'); } },
+    // Songs: played on the same ocarina as the OI. The song-played message spawns the effect actor (z_message.c,
+    // sOcarinaEffectActorIds); Oceff_Storm spawns En_Okarina_Effect in its Init. The held OI bomb is exempt from the
+    // ocarina freeze, so it is freed before the song; frozen things (fish, bugs, other bombs) are not.
+    song_saria: { text: 'Saria’s Song', song: true, ops: function () { return [['+', 'donor', 'Oceff_Wipe3']]; } },
+    song_epona: { text: 'Epona’s Song', song: true, ops: function () { return [['+', 'donor', 'Oceff_Wipe2']]; } },
+    song_zelda: { text: 'Zelda’s Lullaby', song: true, ops: function () { return [['+', 'donor', 'Oceff_Wipe']]; } },
+    song_sun: { text: 'Sun’s Song', song: true, ops: function () { return [['+', 'donor', 'Oceff_Spot']]; } },
+    song_time: { text: 'Song of Time', song: true, ops: function () { return [['+', 'donor', 'Oceff_Wipe']]; } },
+    song_storms: { text: 'Song of Storms', song: true, ops: function () { return [['+', 'donor', 'Oceff_Storm'], ['+', 'donor.rain', 'En_Okarina_Effect']]; } }
   };
   function donorOf(m) { return DONOR[m.donor] || DONOR.fish; }
   var BOTTLE_OF = { fish: 'fish', bugs: 'bugs', bugsc: 'bugs', fairy: 'fairy', bfire: 'bfire' }; // kind → bottle content
@@ -678,7 +690,7 @@ var Method = (function () {
   function evText(m, ev) {
     if (ev === '@prime') return 'The prime (the bombs press is refused)';
     if (ev === '@oi') return 'Backflip, pull out the OI bomb';
-    if (ev === '@donor') return 'After the ocarina, ' + donorOf(m).verb + ' the donor ' + donorOf(m).text;
+    if (ev === '@donor') return donorOf(m).song ? 'Play ' + donorOf(m).text + ' on that ocarina (the donor)' : 'After the ocarina, ' + donorOf(m).verb + ' the donor ' + donorOf(m).text;
     var p = evSplit(ev), it = itemOf(m, p[0]);
     if (it === OI) return 'The OI bomb explodes and fades';
     var t = KINDS[it.kind].text[p[1]];
@@ -697,6 +709,13 @@ var Method = (function () {
     if (it.kind === 'bugsc') return part === 'start' ? [['+', id + '.0', A], ['+', id + '.1', A], ['+', id + '.2', A]] : part === 'catch' ? [['-', id + '.0']] : [['-', id + '.1'], ['-', id + '.2']];
     if (it.kind === 'bugs') return part === 'start' ? [['+', id + '.0', A], ['+', id + '.1', A], ['+', id + '.2', A]] : [['-', id + '.0'], ['-', id + '.1'], ['-', id + '.2']];
     if (it.kind === 'bfire') return bfireOps(id, part !== 'start');
+    // a thrown nut is En_Arrow (ARROW_NUT). When it touches anything (≤ 15 updates) it spawns the En_M_Fire1 flash and
+    // kills itself; the flash lasts 5 updates (z_en_arrow.c, z_en_m_fire1.c). Throwing a nut is not a held-item change.
+    if (it.kind === 'nut') {
+      if (part === 'start') return [['+', id, A]];
+      if (part === 'pop') return [['+', id + '.flash', 'En_M_Fire1'], ['-', id]];
+      return [['-', id + '.flash']];
+    }
     if (it.kind === 'chu') {
       if (part === 'start') return [['+', id, A]];
       if (part === 'pop') return [['+', id + '.blast', 'En_Bom'], ['-', id]];
@@ -784,6 +803,7 @@ var Method = (function () {
     var id = tag.split('.')[0], it = itemOf(m, id);
     if (!it) return tag;
     if (/\.blast$/.test(tag)) return it.name + '’s blast';
+    if (/\.flash$/.test(tag)) return it.name + '’s flash';
     return it.name;
   }
   var MAXPERM = 5040;
@@ -1074,6 +1094,7 @@ var Method = (function () {
     fcatch: { kind: 'fish', name: 'Dupe fish', opt: { end: 'catch' } },
     bugsc: { kind: 'bugsc', name: 'Bugs', opt: {} },
     fairy: { kind: 'fairy', name: 'Fairy', opt: {} },
+    nut: { kind: 'nut', name: 'Deku nut', opt: {} },
     bfire: { kind: 'bfire', name: 'Blue fire', opt: {} },
     hook: { kind: 'hook', name: 'Hookshot', opt: {} },
     fleft: { kind: 'fish', name: 'Floor fish', opt: { end: 'die' } }
@@ -1109,7 +1130,7 @@ var Method = (function () {
     }
     function endOptions(ev, it) { // where an end still open at the OI may go: post (before the donor) or never (outlives the donor)
       if (isAction(m, ev) || /:start$/.test(ev)) return [];
-      if (it.kind === 'bomb' || it.kind === 'chu') return [];
+      if (it.kind === 'bomb' || it.kind === 'chu' || it.kind === 'nut') return [];
       if (it.kind === 'fish') return ['post', 'never'];
       return ['post']; // bugs dig away 200–239 updates after release and arrows last 60 after sticking: they can’t outlive the donor
     }
@@ -1142,6 +1163,8 @@ var Method = (function () {
         donors.forEach(function (d) {
           m.donor = d; var good = true, f0 = null;
           for (var p = 0; p < perms.length; p++) { var f = finish(m, r.clone(), perms[p], false); if (f.error || !f.hit) { good = false; break; } f0 = f0 || f; }
+          // a song is played while everything but the held OI bomb is frozen, so it must also work with only B gone
+          if (good && DONOR[d] && DONOR[d].song) { var fs = finish(m, r.clone(), hookEnds.concat(['B:end']), false); if (fs.error || !fs.hit) good = false; }
           if (good) hits.push({ order: seq.concat(['@prime', '@oi'], pp, ['@donor'], never), donor: d, B: f0.B, word: f0.word });
         });
       })(0);
@@ -1239,7 +1262,7 @@ var Method = (function () {
       var ok = (function rec(i, c) {
         if (i === evs.length) return true;
         var ev = evs[i];
-        if (ev === '@donor') return (c[donor] || 0) > 0;
+        if (ev === '@donor') return (DONOR[donor] && DONOR[donor].song) || (c[donor] || 0) > 0;
         if (ev[0] === '@') return rec(i + 1, c);
         var it = itemOfEv(ev), part = ev.split(':')[1];
         if (!it) return rec(i + 1, c);
@@ -1277,6 +1300,22 @@ var Method = (function () {
       }
       if (presses > 1) return false;
       for (var gq = 0; gaps && gq < gaps.length; gq++) { var ga = order.indexOf(gaps[gq][0]), gb = order.indexOf(gaps[gq][1]); if (ga >= ip && gb <= iF) return false; }
+    }
+    for (var nq = 0; nq < items.length; nq++) {
+      var nu = items[nq]; if (nu.kind !== 'nut') continue;
+      var ns = order.indexOf(nu.id + ':start'), np = order.indexOf(nu.id + ':pop'), nf = order.indexOf(nu.id + ':fade');
+      var acts = function (a, b) { var c = 0; for (var z2 = a + 1; z2 < b; z2++) if (isAction({ items: items }, order[z2])) c++; return c; };
+      if (acts(ns, np) > 1 || acts(np, nf) > 1) return false;
+      for (var gn = 0; gaps && gn < gaps.length; gn++) { var g1 = order.indexOf(gaps[gn][0]), g2 = order.indexOf(gaps[gn][1]); if (g1 >= ns && g2 <= nf) return false; }
+    }
+    // Conservative: no bottle drop between the last catch and the prime. A real drop empties the bottle you caught
+    // into, and any drop switches the bottle in hand, so the bottle press after the backflip may not be the caught one.
+    var iPr = order.indexOf('@prime'), lastC = -1;
+    for (var ci2 = 0; ci2 < iPr; ci2++) if (isCatch({ items: items }, order[ci2])) lastC = ci2;
+    for (var di = lastC + 1; di < iPr; di++) {
+      var de = order[di]; if (de[0] === '@') continue;
+      var dit = null; for (var dj = 0; dj < items.length; dj++) if (items[dj].id === de.split(':')[0]) dit = items[dj];
+      if (dit && BOTTLE_OF[dit.kind] && de.split(':')[1] === 'start') return false;
     }
     // 4+ bottle bugs out at once: every grounded one digs at once and can't be caught (sDroppedCount >= 4,
     // z_en_insect.c). So a release while other bottle bugs are still out isn't usable.
@@ -1736,9 +1775,9 @@ var Swap = (function () {
   });
 
   // ---------- Bomb + OI: solve (every way to add things so the heap works) ----------
-  KC.bugsc = KC.bugs; KC.hook = 'var(--c-other)'; KC.fairy = '#d97fc0'; KC.bfire = '#4aa8e0';
-  var OI_KINDS = { bomb: ['bomb'], chu: ['chu'], arrow: ['arrow'], hook: ['hook'], fish: ['fcatch', 'fleft'], bugs: ['bugs', 'bugsc'], fairy: ['fairy'], bfire: ['bfire'] };
-  var ADD_TEXT = { bomb: 'a bomb', chu: 'a bombchu', arrow: 'an arrow in the floor', bugs: 'bugs left to dig away', bugsc: 'bugs (catch one back)', hook: 'a hookshot draw', fcatch: 'a fish you drop and catch again', fleft: 'a fish left on the floor', fairy: 'a fairy released', bfire: 'blue fire dropped' };
+  KC.bugsc = KC.bugs; KC.hook = 'var(--c-other)'; KC.fairy = '#d97fc0'; KC.bfire = '#4aa8e0'; KC.nut = '#b08a4a';
+  var OI_KINDS = { bomb: ['bomb'], chu: ['chu'], arrow: ['arrow'], hook: ['hook'], nut: ['nut'], fish: ['fcatch', 'fleft'], bugs: ['bugs', 'bugsc'], fairy: ['fairy'], bfire: ['bfire'] };
+  var ADD_TEXT = { bomb: 'a bomb', chu: 'a bombchu', arrow: 'an arrow in the floor', bugs: 'bugs left to dig away', bugsc: 'bugs (catch one back)', hook: 'a hookshot draw', fcatch: 'a fish you drop and catch again', fleft: 'a fish left on the floor', fairy: 'a fairy released', bfire: 'blue fire dropped', nut: 'a deku nut' };
   var BOT_NAME = { fish: 'fish', bugs: 'bugs', fairy: 'fairy', bfire: 'blue fire', empty: 'empty' };
   var oiSt = { allow: { bomb: true, chu: true, arrow: false, hook: true }, bot: { fish: true, bugs: true, fairy: false, bfire: false }, nb: 2, max: 2, dupe: false };
   try { var oiSv = JSON.parse(load('oisolve4') || 'null'); if (oiSv && oiSv.allow && oiSv.bot) oiSt = oiSv; } catch (e) { }
@@ -1747,6 +1786,13 @@ var Swap = (function () {
     el.checked = !!oiSt.allow[el.dataset.oiallow];
     el.addEventListener('change', function () { oiSt.allow[el.dataset.oiallow] = el.checked; oiSave(); });
   });
+  oiSt.songs = oiSt.songs || {};
+  document.querySelectorAll('[data-oisong]').forEach(function (el) {
+    el.checked = !!oiSt.songs[el.dataset.oisong];
+    el.addEventListener('change', function () { oiSt.songs[el.dataset.oisong] = el.checked; oiSave(); });
+  });
+  function oiSongs() { return Object.keys(oiSt.songs).filter(function (k) { return oiSt.songs[k]; }); }
+  function donorName(d) { return (M.DONOR[d] && M.DONOR[d].text) || d; }
   document.querySelectorAll('[data-oibot]').forEach(function (el) {
     el.checked = !!oiSt.bot[el.dataset.oibot];
     el.addEventListener('change', function () { oiSt.bot[el.dataset.oibot] = el.checked; oiSave(); });
@@ -1773,10 +1819,10 @@ var Swap = (function () {
   $('oi-calc').addEventListener('click', function () {
     oiStop();
     var id = ++oiSeq, core = clone(coreOf()), kinds = [];
-    ['bomb', 'chu', 'arrow', 'hook'].forEach(function (k) { if (oiSt.allow[k]) kinds = kinds.concat(OI_KINDS[k]); });
+    ['bomb', 'chu', 'arrow', 'hook', 'nut'].forEach(function (k) { if (oiSt.allow[k]) kinds = kinds.concat(OI_KINDS[k]); });
     oiContents().forEach(function (k) { kinds = kinds.concat(OI_KINDS[k]); });
-    var donors = oiContents();
-    if (!donors.length) { $('oi-status').textContent = '(allow at least one bottled item)'; return; }
+    if (!oiContents().length) { $('oi-status').textContent = '(allow at least one bottled item)'; return; }
+    var donors = oiContents().concat(oiSongs());
     var variants = variantsOf(), tasks = [];
     M.addCombos(kinds, oiSt.max).sort(function (a, b) { return b.length - a.length; }).forEach(function (c) {
       variants.forEach(function (v, vi) { tasks.push({ core: clone(v.method), adds: c, vi: vi }); });
@@ -1819,6 +1865,15 @@ var Swap = (function () {
       var by = {}, v = variants[r.vi || 0], core = v.method;
       var bottles = oiBottles();
       r.hits = r.hits.filter(function (h) { h.plan = M.bottlePlan(r.items, h.order, h.donor, bottles); return h.plan && M.solveFeasible(r.items, h.order, core.order[0], null, null, core.gaps); });
+      // drop hits where an added thing does nothing (the same order without it already works)
+      r.hits = r.hits.filter(function (h) {
+        return !r.items.some(function (it) {
+          if (!it.added) return false;
+          var m2 = M.without({ items: r.items, order: h.order, donor: h.donor }, it.id); m2.prime = 'chu';
+          var a2 = M.analyse(m2, { fast: true });
+          return a2.verdict === 'yes' && !a2.problems.length;
+        });
+      });
       r.hits.forEach(function (h) {
         h.notes = M.solveNotes(r.items, h.order);
         // how much the added steps are mixed into the method's own steps (0 = all done as setup first)
@@ -1844,7 +1899,7 @@ var Swap = (function () {
     }
     $('oi-results').innerHTML = oiGroups.length ? oiGroups.map(function (g, gi) {
       var h = g.best, more = g.hits.slice(1, 40);
-      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + BOT_NAME[g.donor] + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
+      return '<div class="res"><div><b>' + esc(addsTitle(g.adds)) + '</b> &middot; donor ' + esc(donorName(g.donor)) + (g.vlabel ? ' &middot; ' + esc(g.vlabel) : '') + '</div>' +
         '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
         '<div class="oisteps">' + steps(g, h) + '</div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
@@ -1858,7 +1913,7 @@ var Swap = (function () {
       b.addEventListener('click', function () {
         var p = b.dataset.oishow.split(':'), g = oiGroups[+p[0]], h = g.hits[+p[1]];
         setMethod({ items: g.items, order: h.order, donor: h.donor, prime: 'chu' }, '', true);
-        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + ', donor ' + BOT_NAME[g.donor] + (g.vlabel ? ', ' + esc(g.vlabel) : '') + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
+        $('oi-viewing').innerHTML = '(' + esc(addsTitle(g.adds)) + ', donor ' + esc(donorName(g.donor)) + (g.vlabel ? ', ' + esc(g.vlabel) : '') + ') <button class="btn small" type="button" id="oi-back">Back to the method</button>';
         $('oi-back').addEventListener('click', showCore);
         $('tab-oi').scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
