@@ -738,8 +738,9 @@ var Swap = (function () {
       r.forEach(function (x) { if (!x.hit && !x.variable) return; var k = groupKey(x); (local[k] = local[k] || []).push(x); });
       for (var k in local) {
         var g = groups[k];
-        if (!g) groups[k] = { rs: local[k], nd: F[i].length, nf: 1 };
-        else { g.nf++; if (F[i].length < g.nd) { g.rs = local[k]; g.nd = F[i].length; } }
+        var alt = { d: F[i], w: local[k][0].word };
+        if (!g) groups[k] = { rs: local[k], nd: F[i].length, nf: 1, alts: [alt] };
+        else { g.nf++; g.alts.push(alt); if (F[i].length < g.nd) { g.rs = local[k]; g.nd = F[i].length; } }
       }
       if (onFloor) onFloor(i, F.length);
     }
@@ -997,9 +998,9 @@ var Swap = (function () {
       } else setTimeout(function () { Sw.setSnapshot(ROOMSNAP[room], room); done(Sw.search(allow, st.age, st.max, opts)); }, 10);
     }
     var pool = [];
-    function flatten(groups) { var res = []; for (var k in groups) groups[k].rs.forEach(function (r) { r.nf = groups[k].nf; res.push(r); }); return res; }
+    function flatten(groups) { var res = []; for (var k in groups) groups[k].rs.forEach(function (r) { r.nf = groups[k].nf; r.alts = groups[k].alts; res.push(r); }); return res; }
     function merge(into, part) {
-      for (var k in part) { var g = into[k], p = part[k]; if (!g) into[k] = p; else { g.nf += p.nf; if (p.nd < g.nd) { g.rs = p.rs; g.nd = p.nd; } } }
+      for (var k in part) { var g = into[k], p = part[k]; if (!g) into[k] = p; else { g.nf += p.nf; g.alts = g.alts.concat(p.alts); if (p.nd < g.nd) { g.rs = p.rs; g.nd = p.nd; } } }
     }
     function searchDrops(allow, opts, id) {
       pool.forEach(function (w) { w.terminate(); }); pool = [];
@@ -1022,6 +1023,16 @@ var Swap = (function () {
         };
         w.postMessage({ kind: 'swapagg', room: room, data: ROOMDATA[room], allow: allow, age: st.age, max: st.max, opts: opts, part: i, nparts: N });
       }
+    }
+    function dropText(d) { return d.map(function (e) { return PLATNUM[e]; }).sort(function (x, y) { return x - y; }).join(','); }
+    function altFloors(h, kind) {
+      if (!h.alts || h.nf < 2) return '';
+      var mine = dropText(h.cfg.drops || []), seen = {}, rows = [];
+      h.alts.slice().sort(function (a, b) { return a.d.length - b.d.length; }).forEach(function (a) {
+        var t = dropText(a.d); if (t === mine || seen[t]) return; seen[t] = 1;
+        rows.push('<div><code>Drop ' + (t || '(none)') + (kind === 'C' && a.w != null ? '  ' + hex(a.w) : '') + '</code></div>');
+      });
+      return rows.length ? '<details class="alts"><summary>+' + rows.length + ' more floors</summary>' + rows.join('') + '</details>' : '';
     }
     function show(res, nChecked) {
       var groups = {}, order = [];
@@ -1047,7 +1058,7 @@ var Swap = (function () {
         var orders = g.rs.length === n || c.units.length < 2 ? '<div><code>' + esc(actorOrder(c)) + '</code>' + (c.units.length > 1 ? ' (any order of the first ' + c.units.length + ')' : '') + '</div>' :
           g.rs.slice(0, 3).map(function (x) { return '<div><code>' + esc(actorOrder(x.cfg)) + '</code></div>'; }).join('') + (g.rs.length > 3 ? '<div class="status">(+' + (g.rs.length - 3) + ' more orders)</div>' : '');
         return '<div class="res"><div><b>' + esc(title(c)) + '</b></div><div>' + flag + '</div>' +
-          orders + (h.nf > 1 ? '<div class="status">(+' + (h.nf - 1) + ' more floors)</div>' : '') + '<details data-pic="' + kind + i + '"><summary>Memory</summary><div class="pics"></div></details></div>';
+          orders + altFloors(h, kind) + '<details data-pic="' + kind + i + '"><summary>Memory</summary><div class="pics"></div></details></div>';
       }
       $(P + 'results').innerHTML = cons.length ? cons.map(function (g, i) { return entry(g, i, 'C'); }).join('') : '<p>None.</p>';
       $(P + 'var').innerHTML = vars.length ? vars.map(function (g, i) { return entry(g, i, 'V'); }).join('') : '<p>None.</p>';
