@@ -555,7 +555,10 @@ var Swap = (function () {
     bluefire: { label: 'blue fire', spawn: [['En_Ice_Hono', 'blue fire']] },
     none: { label: 'a potion, milk, a poe or anything that spawns nothing', spawn: [] }
   };
-  var UNITS = { seed: { label: 'Seed or arrow', actor: 'En_Arrow' }, bomb: { label: 'Bomb', actor: 'En_Bom' }, chu: { label: 'Bombchu', actor: 'En_Bom_Chu' }, ball: { label: 'Ball', actor: 'Boss_Ganon' } };
+  var UNITS = { seed: { label: 'Seed or arrow', actor: 'En_Arrow' }, bomb: { label: 'Bomb', actor: 'En_Bom' }, chu: { label: 'Bombchu', actor: 'En_Bom_Chu' }, ball: { label: 'Ball', actor: 'Boss_Ganon' },
+    // poured blue fire: the dropped flame + 8 small flames + 10 more, all alive for ~1 s after Link is free (Player_Action_8084EFC0)
+    bf: { label: 'Blue fire', actor: 'En_Ice_Hono', n: 19 } };
+  function spawnUnit(h, k, tag) { var n = UNITS[k].n || 1, a = []; for (var i = 0; i < n; i++) { var x = h.spawn(UNITS[k].actor, n > 1 ? tag + '.' + (i + 1) : tag); if (!x) return null; a.push(x); } return n > 1 ? a : a[0]; }
   // Ganondorf floor: drop platform tiles (Bg_Ganon_Otyuka) by entry number before anything else
   function dropTiles(h, drops) { (drops || []).forEach(function (e) { var t = SNAP.tiles.filter(function (x) { return x.entry === e; })[0]; h.kill('Bg_Ganon_Otyuka', t.inst); }); }
   // Retail struct layouts of the donors (debug offsets - 0x10 after the 0x13C Actor), for naming the field read.
@@ -611,6 +614,7 @@ var Swap = (function () {
     if (actor === 'En_Ice_Hono' && off === 0x154) return C(0);                                     // collider.base.ac NULL
     return V;                                                                                    // curFrame, lightNode, floorPoly, positions, ...
   }
+  function lkey(h) { return h.blocks().map(function (b) { return b[0].toString(36) + (b[2] ? '_' : ':' + String(h.owner.get(b[0]) || '').replace(/[ .]\d+/g, '')); }).join(','); }
   function unitTag(u, i) { return UNITS[u].label.toLowerCase() + ' ' + (i + 1); }
   // pre (search only): { h: heap after the units were spawned (no labels), units: [...] }
   function run(cfg, pre) {
@@ -618,7 +622,7 @@ var Swap = (function () {
     function spawn(actor, tag) { var a = h.spawn(actor, tag); if (!a) throw new Error('no room for ' + tag); log.push(['+', tag, actor, a]); return a; }
     if (!pre) dropTiles(h, cfg.drops);
     var units = pre ? pre.units : (cfg.units || []).map(function (u, i) {
-      var tag = unitTag(u, i); return { kind: u, tag: tag, addr: spawn(UNITS[u].actor, tag) };
+      var tag = unitTag(u, i), a = spawnUnit(h, u, tag); if (!a) throw new Error('no room for ' + tag); log.push(['+', tag, UNITS[u].actor, a]); return { kind: u, tag: tag, addr: a };
     });
     var atk = spawn(A.actor, A.label);
     if (pre) { // only the read word's writer is needed from here on
@@ -627,9 +631,12 @@ var Swap = (function () {
     }
     units.forEach(function (u) {
       if (u.kind === 'chu') { var b = spawn('En_Bom', u.tag + ' blast'); h.kill('En_Bom_Chu', u.addr); h.kill('En_Bom', b); }
+      else if (Array.isArray(u.addr)) u.addr.forEach(function (x) { h.kill(UNITS[u.kind].actor, x); });
       else h.kill(UNITS[u.kind].actor, u.addr);
       log.push(['-', u.tag]);
     });
+    var ck = null;
+    if (pre && pre.cache) { ck = cfg.attacker + cfg.donor + atk + '|' + lkey(h); if (pre.cache[ck]) return pre.cache[ck]; }
     var atPress = pre ? null : h.clone();
     h.kill(A.actor, atk); log.push(['-', A.label]);
     var D = DONORS[cfg.donor], donors = D.spawn.map(function (s) { return { actor: s[0], tag: s[1], addr: spawn(s[0], s[1]) }; });
@@ -674,6 +681,7 @@ var Swap = (function () {
       else res.hit = false;
       res.field = (res.field || '') + ' (' + res.partField + ')';
     } else res.hit = res.variable ? null : (res.word & mask) !== 0;
+    if (ck) { res.atPress = res.atRead = null; pre.cache[ck] = res; }
     return res;
   }
   var PLAIN = { En_Fish: 'fish', En_Insect: 'bug', En_Elf: 'fairy', En_Ice_Hono: 'blue fire', En_Bom: 'bomb', En_Bom_Chu: 'bombchu', En_Arrow: 'seed/arrow', En_M_Thunder: 'spin attack' };
@@ -720,30 +728,44 @@ var Swap = (function () {
     if (A('bombs')) kinds.push('bomb');
     if (A('bombchus')) kinds.push('chu');
     if (opts.ball) kinds.push('ball');
+    if (A('bluefire') && ROOM === ROOMS.gdorf) kinds.push('bf');
     var combos = [];
     atks.forEach(function (atk) { donors.forEach(function (d) { if (d === 'revive' && atk !== 'ring') return; combos.push([atk, d]); }); });
     var drops = null;
     function evalSeq(h, units, us) {
       combos.forEach(function (c) {
         var cfg = { attacker: c[0], donor: c[1], units: us, drops: drops, age: age, unitArrow: !flyingOnly, sword: age === 'child' ? 'kokiri' : 'master', spin: 'big' };
-        var r; try { r = run(cfg, { h: h, units: units }); } catch (e) { return; }
+        var r; try { r = run(cfg, { h: h, units: units, cache: cache }); } catch (e) { return; }
         out.push({ cfg: cfg, word: r.word, known: r.known, partField: r.partField, hit: r.hit, variable: !!r.variable, field: r.field || null, fragile: !!r.fragile, why: r.why, atk: r.atk, src: r.src });
       });
     }
     // depth-first over unit spawn orders, sharing the heap of each prefix
+    // Two orders of the same units that leave an identical heap have identical futures: copy the results instead of re-simulating.
+    var memo = {}, cache = {};
     function rec(h, units, us, nSeed, nExp, nBall) {
+      var key = us.slice().sort().join('+') + '|' + nSeed + '|' + lkey(h), m = memo[key];
+      if (m) {
+        for (var i = m[0]; i < m[1]; i++) { var o = out[i], c = {}; for (var q in o.cfg) c[q] = o.cfg[q]; c.units = us.concat(o.cfg.units.slice(us.length)); var o2 = {}; for (var q2 in o) o2[q2] = o[q2]; o2.cfg = c; out.push(o2); }
+        return;
+      }
+      var start = out.length;
+      rec2(h, units, us, nSeed, nExp, nBall);
+      memo[key] = [start, out.length];
+    }
+    function rec2(h, units, us, nSeed, nExp, nBall) {
       evalSeq(h, units, us);
       if (us.length >= maxUnits) return;
       if (flyingOnly && nSeed) return;               // a flying seed has to be the last thing before the attack
       kinds.forEach(function (k) {
         if ((k === 'bomb' || k === 'chu') && nExp >= 3) return;   // at most 3 explosives out
         if (k === 'ball' && nBall) return;                        // one light ball at a time
-        var h2 = h.clone(), tag = unitTag(k, us.length), a = h2.spawn(UNITS[k].actor, tag);
+        if (us.indexOf('bf') >= 0) return;                        // the flames only last ~1 s once Link is free: nothing else fits between the pour and the attack
+        var h2 = h.clone(), tag = unitTag(k, us.length), a = spawnUnit(h2, k, tag);
         if (!a) return;
         rec(h2, units.concat([{ kind: k, tag: tag, addr: a }]), us.concat([k]), nSeed + (k === 'seed' ? 1 : 0), nExp + (k === 'bomb' || k === 'chu' ? 1 : 0), nBall + (k === 'ball' ? 1 : 0));
       });
     }
-    floors(opts.maxDrops || 0, opts.drops || []).forEach(function (f) { drops = f.drops; rec(f.h, [], [], 0, 0, 0); });
+    floors(opts.maxDrops || 0, opts.drops || []).forEach(function (f) { drops = f.drops; memo = {}; rec(f.h, [], [], 0, 0, 0); });
     return out;
   }
   return { ROOMS: ROOMS, fieldName: fieldName, floors: floors, run: run, search: search, setSnapshot: setSnapshot, ATTACKERS: ATTACKERS, DONORS: DONORS, UNITS: UNITS, RING_WORD: RING_WORD, plain: plain };
@@ -819,7 +841,7 @@ var Swap = (function () {
   var ATK_LABEL = { ring: 'Spin', seed: 'Seed' };
   var DONOR_LABEL = { fairy: 'Fairy', revive: 'Fairy (revive)', fish: 'Fish', bugs: 'Bugs ×3', bluefire: 'Blue fire', none: '(nothing)' };
   function swKey(c) { return c.attacker + '|' + c.units.join('+') + '|' + c.donor + '|' + c.age; }
-  function unitLabel(u, c) { return { seed: c.unitArrow ? 'Arrow' : 'Seed', bomb: 'Bomb', chu: 'Bombchu', ball: 'Ball' }[u]; }
+  function unitLabel(u, c) { return { seed: c.unitArrow ? 'Arrow' : 'Seed', bomb: 'Bomb', chu: 'Bombchu', ball: 'Ball', bf: 'Blue fire' }[u]; }
   function actorOrder(c) {
     var a = [];
     if (c.drops && c.drops.length) a.push('Drop ' + c.drops.map(function (e) { return PLATNUM[e]; }).sort(function (x, y) { return x - y; }).join(','));
