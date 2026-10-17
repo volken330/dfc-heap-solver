@@ -694,10 +694,14 @@ var Method = (function () {
     var p = evSplit(ev), it = itemOf(m, p[0]);
     if (it === OI) return 'OI bomb explodes and fades';
     var t = KINDS[it.kind].text[p[1]];
+    if (it.kind === 'chu' && p[1] === 'pop') { var dn = directNut(m, it.id); if (dn) return dn.name + ' hits ' + it.name + ': ' + it.name + ' explodes and spawns bomb, ' + dn.name + ' flash spawns, then both despawn'; }
     if (typeof t === 'object') t = t[(it.opt && it.opt.end) || 'catch'];
-    return t.replace('{n}', it.name);
+    return t.split('{n}').join(it.name);
   }
-  function eventsOf(it) { return it === OI ? ['B:end'] : KINDS[it.kind].parts.map(function (p) { return it.id + ':' + p; }); }
+  function partsOf(it) { return it.kind === 'nut' && it.opt && it.opt.direct ? ['start', 'fade'] : KINDS[it.kind].parts; }
+  function eventsOf(it) { return it === OI ? ['B:end'] : partsOf(it).map(function (p) { return it.id + ':' + p; }); }
+  // the nut (if any) thrown straight into this bombchu
+  function directNut(m, chuId) { for (var i = 0; i < m.items.length; i++) { var n = m.items[i]; if (n.kind === 'nut' && n.opt && n.opt.direct === chuId) return n; } return null; }
   // heap operations for one event
   function ops(m, ev) {
     if (ev === '@prime') return [];
@@ -718,6 +722,8 @@ var Method = (function () {
     }
     if (it.kind === 'chu') {
       if (part === 'start') return [['+', id, A]];
+      var dn = part === 'pop' ? directNut(m, id) : null;
+      if (dn) return [['+', id + '.blast', 'En_Bom'], ['+', dn.id + '.flash', 'En_M_Fire1'], ['-', id], ['-', dn.id]];
       if (part === 'pop') return [['+', id + '.blast', 'En_Bom'], ['-', id]];
       return [['-', id + '.blast']];
     }
@@ -1167,7 +1173,8 @@ var Method = (function () {
     var items = core.items.concat(extra);
     var m = { items: items, order: [], prime: 'chu', donor: donors[0] };
     var o = core.order, iP = o.indexOf('@prime'), iO = o.indexOf('@oi'), iD = o.indexOf('@donor');
-    var SK = o.slice(0, iO).filter(function (e) { return e !== '@prime'; });
+    var SK = o.slice(0, iP);
+    var PP = o.slice(iP + 1, iO).filter(function (e) { return e[0] !== '@'; }); // passive core steps after the prime, before the OI bomb
     var popEv = o[iP - 1];
     var corePost = o.slice(iO + 1, iD).filter(function (e) { return e !== 'B:end'; });
     // The priming bombchu's blast lasts ~12 updates after the pop. Whether it is still out when the OI bomb is pulled is
@@ -1189,6 +1196,11 @@ var Method = (function () {
     }
     function close(r, ci, seq) {
       if (r.liveExplosives().length >= 3) return;
+      if (PP.length) {
+        var rP = r.clone(), csP = r.cs;
+        for (var pq = 0; pq < PP.length; pq++) { csP = chuStep(m, csP, PP[pq]); if (!csP || rP.apply(ops(m, PP[pq]))) return; }
+        rP.cs = csP; rP.primed = r.primed; r = rP;
+      }
       var rem = [];
       for (var lc = seq.length - 1; lc >= 0; lc--) if (isChange(m, seq[lc])) break;
       if (lc >= 0 && !isCatch(m, seq[lc])) return;
@@ -1228,8 +1240,8 @@ var Method = (function () {
         donors.forEach(function (d) {
           m.donor = d;
           var fA = works(r, perms, d), fG = rG ? works(rG, permsG, d) : null;
-          if (fA) hits.push({ order: seq.concat(['@prime', '@oi'], pp, ['@donor'], never), donor: d, B: fA.B, word: fA.word, ec: !primeFade ? 'any' : fG ? 'any' : 'alive' });
-          else if (fG) hits.push({ order: seq.concat(['@prime', primeFade, '@oi'], ppG, ['@donor'], never), donor: d, B: fG.B, word: fG.word, ec: 'gone' });
+          if (fA) hits.push({ order: seq.concat(['@prime'], PP, ['@oi'], pp, ['@donor'], never), donor: d, B: fA.B, word: fA.word, ec: !primeFade ? 'any' : fG ? 'any' : 'alive' });
+          else if (fG) hits.push({ order: seq.concat(['@prime'], PP, [primeFade, '@oi'], ppG, ['@donor'], never), donor: d, B: fG.B, word: fG.word, ec: 'gone' });
         });
       })(0);
     }
@@ -1353,6 +1365,7 @@ var Method = (function () {
     for (var nq = 0; nq < items.length; nq++) {
       var nu = items[nq]; if (nu.kind !== 'nut') continue;
       var ns = order.indexOf(nu.id + ':start'), np = order.indexOf(nu.id + ':pop'), nf = order.indexOf(nu.id + ':fade');
+      if (np < 0 && nu.opt && nu.opt.direct) np = order.indexOf(nu.opt.direct + ':pop');
       var acts = function (a, b) { var c = 0; for (var z2 = a + 1; z2 < b; z2++) if (isAction({ items: items }, order[z2])) c++; return c; };
       if (acts(ns, np) > 1 || acts(np, nf) > 1) return false;
       for (var gn = 0; gaps && gn < gaps.length; gn++) { var g1 = order.indexOf(gaps[gn][0]), g2 = order.indexOf(gaps[gn][1]); if (g1 >= ns && g2 <= nf) return false; }
@@ -1647,16 +1660,58 @@ var Method = (function () {
       return { events: out, checks: checks, samples: r.samples || 0, exhaustive: !!r.exhaustive };
     }
   }
+  // ---- nut contact: the other way the same throw can set the priming bombchu off ----
+  // A thrown nut that lands next to a bombchu spawns its flash and is freed first; the flash pops the bombchu 2 updates
+  // later (flash spawn, nut freed, bombchu bomb spawns, bombchu freed). A nut that hits the bombchu itself makes the
+  // bombchu explode on the next update, the same update the nut spawns its flash; both are freed one update after that
+  // (bombchu bomb spawns, flash spawns, bombchu freed, nut freed). For the nut that sets off the priming bombchu (the
+  // last nut to land before its pop, or the nut that hits it), returns the same order with the other contact: [] when
+  // there is no such nut.
+  function nutVariants(items, order) {
+    var mm = { items: items }, iP = order.indexOf('@prime'), pe = iP > 0 ? order[iP - 1] : null;
+    var c = pe && pe[0] !== '@' ? itemOf(mm, evSplit(pe)[0]) : null;
+    if (!c || c.kind !== 'chu' || evSplit(pe)[1] !== 'pop') return [];
+    var ic = iP - 1, n = directNut(mm, c.id), ip = -1;
+    if (!n) for (var i = ic - 1; i >= 0; i--) {
+      var e = order[i]; if (e[0] === '@') continue;
+      var it = itemOf(mm, evSplit(e)[0]), part = evSplit(e)[1];
+      if (it && it.kind === 'nut' && part === 'pop') { n = it; ip = i; break; }
+    }
+    if (!n) return [];
+    var it2 = items.map(function (x) { return x === n ? JSON.parse(JSON.stringify(x)) : x; }), n2 = it2[items.indexOf(n)];
+    n2.opt = n2.opt || {};
+    if (n.opt && n.opt.direct) {
+      delete n2.opt.direct;
+      return [{ nut: n.id, chu: c.id, direct: false, label: 'if ' + n.name + ' lands next to ' + c.name + ' (its flash sets it off)', items: it2, order: order.slice(0, ic).concat([n.id + ':pop'], order.slice(ic)) }];
+    }
+    n2.opt.direct = c.id;
+    return [{ nut: n.id, chu: c.id, direct: true, label: 'if ' + n.name + ' hits ' + c.name + ' directly', items: it2, order: order.slice(0, ip).concat(order.slice(ip + 1)) }];
+  }
   function setSnapshot(s, names) { SNAP = s; SCENE_NAMES = {}; for (var k in (names || {})) SCENE_NAMES[+k] = names[k]; }
   return { ADD: ADD, addCombos: addCombos, solveCombo: solveCombo, solveNotes: solveNotes, solveRisk: solveRisk, solveFeasible: solveFeasible, isChange: isChange, isCatch: isCatch, bottlesOk: bottlesOk, bottlePlan: bottlePlan, KINDS: KINDS, LIFE: LIFE, setSnapshot: setSnapshot, analyse: analyse, relevance: relevance, explain: explain, timing: timing,
     search: search, rules: rules, isAction: isAction, evText: evText, eventsOf: eventsOf, itemOf: itemOf, phases: phases, nameOfTag: nameOfTag, holderAt: holderAt,
-    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack, chuProblems: chuProblems };
+    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack, chuProblems: chuProblems, nutVariants: nutVariants, partsOf: partsOf };
 })();
 
 
 // Core Bomb + OI methods: only the method's own steps, in its order, with no heap fixes.
 // lock = the step from which Link's hands are busy until the prime (no added actions after it).
+// Nut interrupt: floor fish, first bomb, bombchu, drop and catch the bottled fish, then a Deku nut throw cut short by a
+// lava hit sets the bombchu off and bombs are pressed on its pop (the prime). Backflip into the first bomb for the OI;
+// the floor fish dies on its own after the OI bomb. The nut's flash lasts 5 updates, so it is gone before the OI bomb.
+// Two ways the nut can set the bombchu off, solved separately (the heap frees things in a different order):
+// it lands next to the bombchu and its flash pops it, or it hits the bombchu itself.
+var NUT_INTERRUPT = function (direct) {
+  return { donor: 'bugs', prime: 'chu', lock: 'n:start', gaps: [['f:end', 'n:start']], items: [
+    { id: 'g', kind: 'fish', name: 'Floor fish', opt: { end: 'die' } }, { id: 'x', kind: 'bomb', name: 'First bomb', opt: { detonator: true } },
+    { id: 'c', kind: 'chu', name: 'Bombchu' }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
+    { id: 'n', kind: 'nut', name: 'Deku nut', opt: direct ? { direct: 'c' } : {} }],
+    order: ['g:start', 'x:start', 'c:start', 'f:start', 'f:end', 'n:start'].concat(direct ? [] : ['n:pop'],
+      ['c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor']) };
+};
 var PRESETS = [
+  { name: 'Nut interrupt', method: NUT_INTERRUPT(false),
+    variants: [{ label: 'nut lands next to the bombchu', method: NUT_INTERRUPT(false) }, { label: 'nut hits the bombchu directly', method: NUT_INTERRUPT(true) }] },
   { name: 'Long chu',
     // the bottled item can be fish or bugs, dropped before or after the first bomb; the catch is always after the bomb.
     // Solve tries every variant and says which one each result uses.
@@ -2229,15 +2284,22 @@ var Swap = (function () {
         h.mix = h.order.slice(firstCore, oi).filter(function (e) { return e[0] !== '@' && /^x\d/.test(e); }).length;
         h.risk = M.solveRisk(r.items, h.order, core.order[0]);
         h.dupes = Object.keys(h.plan).filter(function (k) { return h.plan[k] === 'dupe'; }).length;
+        // a nut that sets a bombchu off: does the same order also work with the other contact (lands next to it / hits it)?
+        h.cross = M.nutVariants(r.items, h.order).map(function (alt) {
+          var a = M.analyse({ items: alt.items, order: alt.order, donor: h.donor, prime: 'chu' }, { fast: true });
+          var ok = a.verdict === 'yes' && !a.problems.length, o0 = a.orders && a.orders.filter(function (o) { return !o.hit; })[0];
+          return { label: alt.label, ok: ok, B: o0 ? o0.B : null, word: o0 ? o0.word : null };
+        });
+        h.crossBad = h.cross.filter(function (c) { return !c.ok; }).length;
         (by[h.donor] = by[h.donor] || []).push(h);
       });
       for (var d in by) {
-        var hs = by[d].sort(function (a, b) { return (a.ec !== 'any') - (b.ec !== 'any') || a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
+        var hs = by[d].sort(function (a, b) { return a.crossBad - b.crossBad || (a.ec !== 'any') - (b.ec !== 'any') || a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
         oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0, coreFirst: core.order[0], gaps: core.gaps, bottles: bottles });
       }
     });
     // results where it doesn't matter whether the bombchu blast outlasts the OI bomb spawn come first
-    oiGroups.sort(function (a, b) { return (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
+    oiGroups.sort(function (a, b) { return a.best.crossBad - b.best.crossBad || (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
     $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText() + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
     $('oi-results').innerHTML = oiGroups.length ? '<p class="hint">Steps that happen on their own (explosions, fades, despawns) are marked with how much their timing matters: <span class="tchip exact">exactly here</span> <span class="tchip">here or later</span> <span class="tchip">here or earlier</span>, or a step they must come after or before. Every spot inside a marked range was checked to work, with the other steps also anywhere in their own ranges. A step whose timing doesn’t matter at all is left out. Unmarked steps are the ones you do.</p>' + oiGroups.map(function (g, gi) {
@@ -2246,6 +2308,7 @@ var Swap = (function () {
         '<div><code>' + hex(h.word) + '</code> at OI bomb <code>' + hex(h.B) + '</code> &middot; bottles: ' + esc(startText(h.plan.$bottles)) + ' &middot; Bombchu blast after OI bomb? <b>' + BLAST_AFTER_OI[h.ec] + '</b>' + ' &middot; ' + g.hits.length + ' order' + (g.hits.length === 1 ? '' : 's') + '</div>' +
         '<div class="oisteps"><span data-oisteps="' + gi + ':0">' + oiSteps(g, h) + '</span></div>' +
         (h.notes.length ? '<ul class="oinotes">' + h.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
+        crossHtml(h) +
         '<div><button class="btn small" type="button" data-oishow="' + gi + ':0">Show</button></div>' +
         (more.length ? '<details class="alts"><summary>+' + (g.hits.length - 1) + ' more orders</summary>' + more.map(function (x, k) {
           return '<div class="oisteps"><button class="btn small" type="button" data-oishow="' + gi + ':' + (k + 1) + '">Show</button> <span data-oisteps="' + gi + ':' + (k + 1) + '">' + oiSteps(g, x) + '</span></div>';
@@ -2262,6 +2325,13 @@ var Swap = (function () {
       });
     });
     slackStart();
+  }
+  // one line per nut that sets a bombchu off: the same order with the other kind of nut contact
+  function crossHtml(h) {
+    if (!h.cross || !h.cross.length) return '';
+    return '<ul class="oinotes">' + h.cross.map(function (c) {
+      return '<li>' + esc(c.label.charAt(0).toUpperCase() + c.label.slice(1)) + ' instead: ' + (c.ok ? '<b>also works</b>' : '<b>doesn’t work</b>' + (c.B !== null ? ' (<code>' + hex(c.word) + '</code> at OI bomb <code>' + hex(c.B) + '</code>)' : '')) + '</li>';
+    }).join('') + '</ul>';
   }
   function edited() { $('preset').value = 'own'; }
   $('prime').addEventListener('change', function () { m.prime = $('prime').value; edited(); update(); });
