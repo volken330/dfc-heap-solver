@@ -695,6 +695,8 @@ var Method = (function () {
     if (it === OI) return 'OI bomb explodes and fades';
     var t = KINDS[it.kind].text[p[1]];
     if (it.kind === 'chu' && p[1] === 'pop') { var dn = directNut(m, it.id); if (dn) return dn.name + ' hits ' + it.name + ': ' + it.name + ' explodes and spawns bomb, ' + dn.name + ' flash spawns, then both despawn'; }
+    if (it.kind === 'chu' && p[1] === 'pop') { var inn = insideNut(m, it.id); if (inn) return it.name + ' (inside the flash) explodes and spawns bomb, ' + inn.name + ' despawns'; }
+    if (it.kind === 'nut' && p[1] === 'pop' && it.opt && it.opt.inside) return it.name + ' flash spawns';
     if (typeof t === 'object') t = t[(it.opt && it.opt.end) || 'catch'];
     return t.split('{n}').join(it.name);
   }
@@ -702,6 +704,10 @@ var Method = (function () {
   function eventsOf(it) { return it === OI ? ['B:end'] : partsOf(it).map(function (p) { return it.id + ':' + p; }); }
   // the nut (if any) thrown straight into this bombchu
   function directNut(m, chuId) { for (var i = 0; i < m.items.length; i++) { var n = m.items[i]; if (n.kind === 'nut' && n.opt && n.opt.direct === chuId) return n; } return null; }
+  // the nut whose flash appears with this bombchu already inside it (opt.inside = chu id). The flash is Misc and updates on
+  // its spawn update, so the bombchu (EXPLOSIVE list) explodes on the next update before the nut (ITEMACTION) is freed:
+  // flash spawns, bombchu bomb spawns, nut freed, bombchu freed (VOLVAGIA_NUT_FLASH_HEAP_ORDER_CORRECTION_AND_RELAY_HEAP).
+  function insideNut(m, chuId) { for (var i = 0; i < m.items.length; i++) { var n = m.items[i]; if (n.kind === 'nut' && n.opt && n.opt.inside === chuId) return n; } return null; }
   // heap operations for one event
   function ops(m, ev) {
     if (ev === '@prime') return [];
@@ -717,6 +723,7 @@ var Method = (function () {
     // kills itself; the flash lasts 5 updates (z_en_arrow.c, z_en_m_fire1.c). Throwing a nut is not a held-item change.
     if (it.kind === 'nut') {
       if (part === 'start') return [['+', id, A]];
+      if (part === 'pop' && it.opt && it.opt.inside) return [['+', id + '.flash', 'En_M_Fire1']]; // nut freed with the bombchu's pop
       if (part === 'pop') return [['+', id + '.flash', 'En_M_Fire1'], ['-', id]];
       return [['-', id + '.flash']];
     }
@@ -724,6 +731,8 @@ var Method = (function () {
       if (part === 'start') return [['+', id, A]];
       var dn = part === 'pop' ? directNut(m, id) : null;
       if (dn) return [['+', id + '.blast', 'En_Bom'], ['+', dn.id + '.flash', 'En_M_Fire1'], ['-', id], ['-', dn.id]];
+      var inn = part === 'pop' ? insideNut(m, id) : null;
+      if (inn) return [['+', id + '.blast', 'En_Bom'], ['-', inn.id], ['-', id]];
       if (part === 'pop') return [['+', id + '.blast', 'En_Bom'], ['-', id]];
       return [['-', id + '.blast']];
     }
@@ -1143,7 +1152,7 @@ var Method = (function () {
   // exactly two out). Ends after the OI are checked in every order; a fish on the floor may also outlive the donor.
   var ADD = {
     bomb: { kind: 'bomb', name: 'Extra bomb', opt: {} },
-    chu: { kind: 'chu', name: 'Extra bombchu', opt: {} },
+    chu: { kind: 'chu', name: 'Throwaway bombchu', opt: {} },
     arrow: { kind: 'arrow', name: 'Extra arrow', opt: { arrow: 'floor' } },
     bugs: { kind: 'bugs', name: 'Bugs', opt: {} },
     fcatch: { kind: 'fish', name: 'Dupe fish', opt: { end: 'catch' } },
@@ -1343,8 +1352,38 @@ var Method = (function () {
     }
   }
   function bottlesOk(items, order, donor, bottles) { return !!bottlePlan(items, order, donor, bottles); }
-  function solveFeasible(items, order, coreFirst, donor, bottles, gaps) {
+  // rules (optional, from the method): { noBombInBlast: no bomb placed while a bombchu explosion is out,
+  // oneDropPerBlast: at most one bottle drop/release while a bombchu explosion is out,
+  // addedExplosivesDoneBefore: an event every added bomb/bombchu must have exploded and faded before,
+  // noWaiting: no long waits anywhere, even before the method's first step }
+  function solveFeasible(items, order, coreFirst, donor, bottles, gaps, rules) {
     if (chuProblems({ items: items }, order).length) return false; // bombchu timing rules
+    if (rules && (rules.noBombInBlast || rules.oneDropPerBlast)) {
+      for (var rq = 0; rq < items.length; rq++) {
+        var rc = items[rq]; if (rc.kind !== 'chu') continue;
+        var rp = order.indexOf(rc.id + ':pop'), rf = order.indexOf(rc.id + ':fade'), iOIr = order.indexOf('@oi');
+        if (rp < 0) continue;
+        if (rf < 0 || rf > iOIr) rf = iOIr; // a blast still out at the OI bomb: only what comes before the OI matters
+        var nd = 0;
+        for (var rz = rp + 1; rz < rf; rz++) {
+          var re = order[rz]; if (re[0] === '@') continue;
+          var rit = itemOf({ items: items }, evSplit(re)[0]); if (!rit || rit === OI) continue;
+          if (evSplit(re)[1] !== 'start') continue;
+          if (rules.noBombInBlast && rit.kind === 'bomb') return false;
+          if (BOTTLE_OF[rit.kind]) nd++;
+        }
+        if (rules.oneDropPerBlast && nd > 1) return false;
+      }
+    }
+    // rules.addedExplosivesDoneBefore = eventId: every added bomb or bombchu has fully exploded and faded before it
+    if (rules && rules.addedExplosivesDoneBefore) {
+      var lim = order.indexOf(rules.addedExplosivesDoneBefore);
+      for (var aq = 0; aq < items.length; aq++) {
+        var ai = items[aq]; if (!ai.added || (ai.kind !== 'chu' && ai.kind !== 'bomb')) continue;
+        var last = order.indexOf(ai.id + (ai.kind === 'chu' ? ':fade' : ':end'));
+        if (lim >= 0 && (last < 0 || last > lim)) return false;
+      }
+    }
     if (bottles && !bottlesOk(items, order, donor, bottles)) return false;
     // an added bombchu's blast lasts ~12 updates of unfrozen time (bottle drops and catches pause it):
     // at most one quick press inside it, no bomb that is placed and explodes inside it, no long wait (gaps) inside it
@@ -1404,12 +1443,12 @@ var Method = (function () {
     for (var k = 0; k < items.length; k++) {
       var it = items[k], is = order.indexOf(it.id + ':start'), ie = order.indexOf(it.id + ':end');
       if (is < 0 || ie < 0) continue;
-      var early = is < i0; // dropped/released before the method starts: you can wait as long as you like
+      var early = is < i0 && !(rules && rules.noWaiting); // dropped/released before the method starts: you can wait as long as you like (unless the method forbids waiting)
       if (it.kind === 'fish' && it.opt && it.opt.end === 'die') {
         var bw = between(is, Math.min(ie, iO));
         var minAge = 44 + 120 * bw.drops + 44 * bw.catches; // age by the OI (or by its end) with no waiting at all
         if (ie < iO) { if (!early && !bw.catches && minAge < 400) return false; }          // must reach 400 before the OI
-        else if (ie < iD) { if (!early && !bw.catches && minAge + 40 < 312) return false; } // must be 312–399 at the backflip
+        else if (ie < iD) { if (minAge > 399) return false; if (!early && !bw.catches && minAge + 40 < 312) return false; } // must be 312–399 at the backflip (it ages through every drop and catch after it lands)
         else if (minAge > 399) return false;                                                // must outlive the donor
       }
       if (it.kind === 'bugs' || it.kind === 'bugsc') {
@@ -1660,37 +1699,48 @@ var Method = (function () {
       return { events: out, checks: checks, samples: r.samples || 0, exhaustive: !!r.exhaustive };
     }
   }
-  // ---- nut contact: the other way the same throw can set the priming bombchu off ----
-  // A thrown nut that lands next to a bombchu spawns its flash and is freed first; the flash pops the bombchu 2 updates
-  // later (flash spawn, nut freed, bombchu bomb spawns, bombchu freed). A nut that hits the bombchu itself makes the
-  // bombchu explode on the next update, the same update the nut spawns its flash; both are freed one update after that
-  // (bombchu bomb spawns, flash spawns, bombchu freed, nut freed). For the nut that sets off the priming bombchu (the
-  // last nut to land before its pop, or the nut that hits it), returns the same order with the other contact: [] when
-  // there is no such nut.
+  // ---- nut contact: the other ways the same throw can set the priming bombchu off ----
+  // Three contacts, each with its own heap order (VOLVAGIA_NUT_FLASH_HEAP_ORDER_CORRECTION_AND_RELAY_HEAP_2026-10-17):
+  //   late:   the nut lands, the bombchu walks into the flash 1-3 updates later: flash spawns, nut freed, bomb spawns, chu freed
+  //   inside: the bombchu is already inside the flash when it appears: flash spawns, bomb spawns, nut freed, chu freed
+  //   direct: the nut hits the bombchu: bomb spawns, flash spawns, chu freed, nut freed
+  // For the nut that sets off the priming bombchu (the last nut to land before its pop, or one marked inside/direct for
+  // it), returns the same order with each of the other two contacts. [] when there is no such nut.
+  var CONTACT_LABEL = {
+    late: function (n, c) { return 'if ' + c.name + ' walks into ' + n.name + '\'s flash after it appears'; },
+    inside: function (n, c) { return 'if ' + c.name + ' is already inside ' + n.name + '\'s flash when it appears'; },
+    direct: function (n, c) { return 'if ' + n.name + ' hits ' + c.name + ' directly'; }
+  };
+  function nutContact(n) { return n.opt && n.opt.direct ? 'direct' : n.opt && n.opt.inside ? 'inside' : 'late'; }
   function nutVariants(items, order) {
     var mm = { items: items }, iP = order.indexOf('@prime'), pe = iP > 0 ? order[iP - 1] : null;
     var c = pe && pe[0] !== '@' ? itemOf(mm, evSplit(pe)[0]) : null;
     if (!c || c.kind !== 'chu' || evSplit(pe)[1] !== 'pop') return [];
-    var ic = iP - 1, n = directNut(mm, c.id), ip = -1;
+    var ic = iP - 1, n = directNut(mm, c.id) || insideNut(mm, c.id);
     if (!n) for (var i = ic - 1; i >= 0; i--) {
       var e = order[i]; if (e[0] === '@') continue;
-      var it = itemOf(mm, evSplit(e)[0]), part = evSplit(e)[1];
-      if (it && it.kind === 'nut' && part === 'pop') { n = it; ip = i; break; }
+      var it = itemOf(mm, evSplit(e)[0]);
+      if (it && it.kind === 'nut' && evSplit(e)[1] === 'pop') { n = it; break; }
     }
     if (!n) return [];
-    var it2 = items.map(function (x) { return x === n ? JSON.parse(JSON.stringify(x)) : x; }), n2 = it2[items.indexOf(n)];
-    n2.opt = n2.opt || {};
-    if (n.opt && n.opt.direct) {
-      delete n2.opt.direct;
-      return [{ nut: n.id, chu: c.id, direct: false, label: 'if ' + n.name + ' lands next to ' + c.name + ' (its flash sets it off)', items: it2, order: order.slice(0, ic).concat([n.id + ':pop'], order.slice(ic)) }];
-    }
-    n2.opt.direct = c.id;
-    return [{ nut: n.id, chu: c.id, direct: true, label: 'if ' + n.name + ' hits ' + c.name + ' directly', items: it2, order: order.slice(0, ip).concat(order.slice(ip + 1)) }];
+    var from = nutContact(n), out = [];
+    // the order with the nut's own pop removed (direct form) and with it put back just before the bombchu pop
+    var base = order.filter(function (e) { return e !== n.id + ':pop'; });
+    var icb = base.indexOf(c.id + ':pop');
+    var withPop = from === 'direct' ? base.slice(0, icb).concat([n.id + ':pop'], base.slice(icb)) : order;
+    ['late', 'inside', 'direct'].forEach(function (to) {
+      if (to === from) return;
+      var it2 = items.map(function (x) { return x === n ? JSON.parse(JSON.stringify(x)) : x; }), n2 = it2[items.indexOf(n)];
+      n2.opt = n2.opt || {}; delete n2.opt.direct; delete n2.opt.inside;
+      if (to === 'direct') n2.opt.direct = c.id; else if (to === 'inside') n2.opt.inside = c.id;
+      out.push({ nut: n.id, chu: c.id, contact: to, direct: to === 'direct', label: CONTACT_LABEL[to](n, c), items: it2, order: to === 'direct' ? base : withPop });
+    });
+    return out;
   }
   function setSnapshot(s, names) { SNAP = s; SCENE_NAMES = {}; for (var k in (names || {})) SCENE_NAMES[+k] = names[k]; }
   return { ADD: ADD, addCombos: addCombos, solveCombo: solveCombo, solveNotes: solveNotes, solveRisk: solveRisk, solveFeasible: solveFeasible, isChange: isChange, isCatch: isCatch, bottlesOk: bottlesOk, bottlePlan: bottlePlan, KINDS: KINDS, LIFE: LIFE, setSnapshot: setSnapshot, analyse: analyse, relevance: relevance, explain: explain, timing: timing,
     search: search, rules: rules, isAction: isAction, evText: evText, eventsOf: eventsOf, itemOf: itemOf, phases: phases, nameOfTag: nameOfTag, holderAt: holderAt,
-    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack, chuProblems: chuProblems, nutVariants: nutVariants, partsOf: partsOf };
+    plainSource: plainSource, BOTTLE_OF: BOTTLE_OF, DONOR: DONOR, without: without, HOLE_LO: HOLE_LO, HOLE_HI: HOLE_HI, evSplit: evSplit, isPress: isPress, slack: slack, chuProblems: chuProblems, nutVariants: nutVariants, partsOf: partsOf, ops: ops };
 })();
 
 
@@ -1709,8 +1759,22 @@ var NUT_INTERRUPT = function (direct) {
     order: ['g:start', 'x:start', 'c:start', 'f:start', 'f:end', 'n:start'].concat(direct ? [] : ['n:pop'],
       ['c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor']) };
 };
+// Current nut-interrupt methods (VOLVAGIA_STATUS_INDEX §1, 2026-10-18). Only the player's own steps are in the method; Solve
+// has to find the heap fix (throwaway bombchus etc.). Nothing may be added from the bombchu draw (chu → bomb) or from the
+// bomb throw (bomb → chu) until the nut. rules: no bomb placed during a bombchu explosion, at most one bottle drop per
+// explosion. The priming nut is solved with the "walks in late" contact; each result is also checked with the other two.
+var NUT_CORE = function (bombFirst) {
+  var mid = bombFirst ? ['x:start', 'c:start'] : ['c:start', 'x:start'];
+  return { donor: 'bugs', prime: 'chu', lock: mid[0], rules: { noBombInBlast: true, oneDropPerBlast: true, addedExplosivesDoneBefore: 'x:start', noWaiting: true }, items: [
+    { id: 'g', kind: 'fish', name: 'Floor fish A', opt: { end: 'die' } }, { id: 'f', kind: 'fish', name: 'Fish B', opt: { end: 'catch' } },
+    { id: 'c', kind: 'chu', name: 'Priming bombchu' }, { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } },
+    { id: 'n', kind: 'nut', name: 'Deku nut', opt: {} }],
+    order: ['g:start', 'f:start'].concat(mid, ['f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor']) };
+};
 var PRESETS = [
-  { name: 'Nut interrupt', method: NUT_INTERRUPT(false),
+  { name: 'Nut interrupt: chu → bomb', method: NUT_CORE(false) },
+  { name: 'Nut interrupt: bomb → chu', method: NUT_CORE(true) },
+  { name: 'Nut interrupt (10-17, superseded)', hidden: true, method: NUT_INTERRUPT(false),
     variants: [{ label: 'nut lands next to the bombchu', method: NUT_INTERRUPT(false) }, { label: 'nut hits the bombchu directly', method: NUT_INTERRUPT(true) }] },
   { name: 'Long chu',
     // the bottled item can be fish or bugs, dropped before or after the first bomb; the catch is always after the bomb.
@@ -2221,7 +2285,7 @@ var Swap = (function () {
   var slackPool = [], slackSeq = 0, slackURL = null;
   // a worker: sets up the heap snapshot from the first message, then answers every job in it
   try { slackURL = URL.createObjectURL(new Blob([coreSrc + '\n;var ready=false;onmessage=function(e){var d=e.data;if(!ready){Method.setSnapshot(new HeapEngine.Snapshot(d.data),d.data.names);ready=true;}' +
-    'd.jobs.forEach(function(j){var s=null;try{s=Method.slack(j.items,j.order,j.donor,function(o){return !!Method.bottlePlan(j.items,o,j.donor,j.bottles)&&Method.solveFeasible(j.items,o,j.coreFirst,null,null,j.gaps);});}catch(x){}postMessage({key:j.key,s:s});});postMessage({done:true});};'], { type: 'text/javascript' })); } catch (e) { }
+    'd.jobs.forEach(function(j){var s=null;try{s=Method.slack(j.items,j.order,j.donor,function(o){return !!Method.bottlePlan(j.items,o,j.donor,j.bottles)&&Method.solveFeasible(j.items,o,j.coreFirst,null,null,j.gaps,j.rules);});}catch(x){}postMessage({key:j.key,s:s});});postMessage({done:true});};'], { type: 'text/javascript' })); } catch (e) { }
   function slackStop() { slackSeq++; slackPool.forEach(function (w) { w.terminate(); }); slackPool = []; }
   function slackStart() {
     slackStop();
@@ -2230,7 +2294,7 @@ var Swap = (function () {
     [true, false].forEach(function (first) {
       oiGroups.forEach(function (g, gi) {
         g.hits.slice(0, 40).forEach(function (h, hi) {
-          if ((hi === 0) === first) jobs.push({ key: gi + ':' + hi, items: g.items, order: h.order, donor: h.donor, bottles: g.bottles, coreFirst: g.coreFirst, gaps: g.gaps });
+          if ((hi === 0) === first) jobs.push({ key: gi + ':' + hi, items: g.items, order: h.order, donor: h.donor, bottles: g.bottles, coreFirst: g.coreFirst, gaps: g.gaps, rules: g.rules });
         });
       });
     });
@@ -2245,7 +2309,7 @@ var Swap = (function () {
       (function next(i) {
         if (id !== slackSeq || i >= jobs.length) return;
         var j = jobs[i], s = null;
-        try { s = M.slack(j.items, j.order, j.donor, function (o) { return !!M.bottlePlan(j.items, o, j.donor, j.bottles) && M.solveFeasible(j.items, o, j.coreFirst, null, null, j.gaps); }); } catch (x) { }
+        try { s = M.slack(j.items, j.order, j.donor, function (o) { return !!M.bottlePlan(j.items, o, j.donor, j.bottles) && M.solveFeasible(j.items, o, j.coreFirst, null, null, j.gaps, j.rules); }); } catch (x) { }
         got(j.key, s); setTimeout(function () { next(i + 1); }, 0);
       })(0);
       return;
@@ -2267,7 +2331,7 @@ var Swap = (function () {
     results.forEach(function (r) {
       var by = {}, v = variants[r.vi || 0], core = v.method;
       var bottles = oiBottles();
-      r.hits = r.hits.filter(function (h) { h.plan = M.bottlePlan(r.items, h.order, h.donor, bottles); return h.plan && M.solveFeasible(r.items, h.order, core.order[0], null, null, core.gaps); });
+      r.hits = r.hits.filter(function (h) { h.plan = M.bottlePlan(r.items, h.order, h.donor, bottles); return h.plan && M.solveFeasible(r.items, h.order, core.order[0], null, null, core.gaps, core.rules); });
       // drop hits where an added thing does nothing (the same order without it already works)
       r.hits = r.hits.filter(function (h) {
         return !r.items.some(function (it) {
@@ -2295,11 +2359,11 @@ var Swap = (function () {
       });
       for (var d in by) {
         var hs = by[d].sort(function (a, b) { return a.crossBad - b.crossBad || (a.ec !== 'any') - (b.ec !== 'any') || a.risk - b.risk || a.dupes - b.dupes || a.notes.length - b.notes.length || a.mix - b.mix; });
-        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0, coreFirst: core.order[0], gaps: core.gaps, bottles: bottles });
+        oiGroups.push({ adds: r.adds, items: r.items, donor: d, hits: hs, best: hs[0], vlabel: v.label, vi: r.vi || 0, coreFirst: core.order[0], gaps: core.gaps, rules: core.rules, bottles: bottles });
       }
     });
     // results where it doesn't matter whether the bombchu blast outlasts the OI bomb spawn come first
-    oiGroups.sort(function (a, b) { return a.best.crossBad - b.best.crossBad || (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.adds.length - b.adds.length || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
+    oiGroups.sort(function (a, b) { return a.best.crossBad - b.best.crossBad || a.adds.length - b.adds.length || (a.best.ec !== 'any') - (b.best.ec !== 'any') || a.best.risk - b.best.risk || a.best.notes.length - b.best.notes.length || (a.donor === 'fish' ? 0 : 1) - (b.donor === 'fish' ? 0 : 1) || a.vi - b.vi || b.hits.length - a.hits.length; });
     $('oi-res-card').hidden = false;
     $('oi-nres').textContent = '(' + oiGroups.length + ' combinations work with ' + bottlesText() + ', ' + oiGroups.reduce(function (s, g) { return s + g.hits.length; }, 0) + ' orders)';
     $('oi-results').innerHTML = oiGroups.length ? '<p class="hint">Steps that happen on their own (explosions, fades, despawns) are marked with how much their timing matters: <span class="tchip exact">exactly here</span> <span class="tchip">here or later</span> <span class="tchip">here or earlier</span>, or a step they must come after or before. Every spot inside a marked range was checked to work, with the other steps also anywhere in their own ranges. A step whose timing doesn’t matter at all is left out. Unmarked steps are the ones you do.</p>' + oiGroups.map(function (g, gi) {
