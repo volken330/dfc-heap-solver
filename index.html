@@ -1832,7 +1832,7 @@ var NUT_CURRENT = { donor: 'bugs', prime: 'chu', lock: 'c:start', rules: { noBom
   order: ['g:start', 'k:start', 'k:pop', 'f:start', 'c:start', 'k:fade', 'x:start', 'f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', 'c:fade', '@oi', 'x:end', 'B:end', 'g:end', '@donor'] };
 var NUT_SETTINGS = { nb: 2, dupe: true, bot: { fish: true, bugs: true, fairy: false, bfire: false } };
 var PRESETS = [
-  { name: 'Nut interrupt in the lava (current method)', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
+  { name: 'Nut interrupt in the lava', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
   { name: 'Nut interrupt: chu → bomb', method: NUT_CORE(false), settings: NUT_SETTINGS },
   { name: 'Nut interrupt: bomb → chu', method: NUT_CORE(true), settings: NUT_SETTINGS },
   { name: 'Nut interrupt (10-17, superseded)', hidden: true, method: NUT_INTERRUPT(false),
