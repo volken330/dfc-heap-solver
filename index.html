@@ -1230,7 +1230,7 @@ var Method = (function () {
     var PP = o.slice(iP + 1, iO).filter(function (e) { return e[0] !== '@'; }); // passive core steps after the prime, before the OI bomb
     var popEv = o[iP - 1];
     var corePost = o.slice(iO + 1, iD).filter(function (e) { return e !== 'B:end'; });
-    // The priming bombchu's blast lasts ~12 updates after the pop. Whether it is still out when the OI bomb is pulled is
+    // The quickdraw bombchu's blast lasts ~12 updates after the pop. Whether it is still out when the OI bomb is pulled is
     // a timing detail, so every result is checked both ways: ec = 'any' (doesn't matter), 'alive' or 'gone'.
     var primeFade = popEv ? evSplit(popEv)[0] + ':fade' : null;
     if (corePost.indexOf(primeFade) < 0) primeFade = null;
@@ -1743,12 +1743,12 @@ var Method = (function () {
       return { events: out, checks: checks, samples: r.samples || 0, exhaustive: !!r.exhaustive };
     }
   }
-  // ---- nut contact: the other ways the same throw can set the priming bombchu off ----
+  // ---- nut contact: the other ways the same throw can set the quickdraw bombchu off ----
   // Three contacts, each with its own heap order (VOLVAGIA_NUT_FLASH_HEAP_ORDER_CORRECTION_AND_RELAY_HEAP_2026-10-17):
   //   late:   the nut lands, the bombchu walks into the flash 1-3 updates later: flash spawns, nut freed, bomb spawns, chu freed
   //   inside: the bombchu is already inside the flash when it appears: flash spawns, bomb spawns, nut freed, chu freed
   //   direct: the nut hits the bombchu: bomb spawns, flash spawns, chu freed, nut freed
-  // For the nut that sets off the priming bombchu (the last nut to land before its pop, or one marked inside/direct for
+  // For the nut that sets off the quickdraw bombchu (the last nut to land before its pop, or one marked inside/direct for
   // it), returns the same order with each of the other two contacts. [] when there is no such nut.
   var CONTACT_LABEL = {
     late: function (n, c) { return 'if ' + c.name + ' walks into ' + n.name + '\'s flash after it appears'; },
@@ -1811,22 +1811,22 @@ var NUT_CORE = function (bombFirst) {
   var mid = bombFirst ? ['x:start', 'c:start'] : ['c:start', 'x:start'];
   return { donor: 'bugs', prime: 'chu', lock: mid[0], rules: { noBombInBlast: true, oneDropPerBlast: true, addedExplosivesDoneBefore: 'x:start', noWaiting: true }, items: [
     { id: 'g', kind: 'fish', name: 'Floor fish A', opt: { end: 'die' } }, { id: 'f', kind: 'fish', name: 'Fish B', opt: { end: 'catch' } },
-    { id: 'c', kind: 'chu', name: 'Priming bombchu' }, { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } },
+    { id: 'c', kind: 'chu', name: 'Quickdraw bombchu' }, { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } },
     { id: 'n', kind: 'nut', name: 'Deku nut', opt: {} }],
     order: ['g:start', 'f:start'].concat(mid, ['f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor']) };
 };
 // The method in use (VOLVAGIA_STATUS_INDEX §1, user, 2026-10-18), written out in full with its throwaway bombchu as one of
 // the player's own steps, so the page shows exactly this order instead of having Solve pick a heap fix:
 // floor fish (equip-swap dupe) → throwaway bombchu dropped on it → it pops on the floor fish → drop fish B while the
-// throwaway's explosion is still out → priming bombchu into the hole → the throwaway's explosion fades → detonator bomb
+// throwaway's explosion is still out → quickdraw bombchu into the hole → the throwaway's explosion fades → detonator bomb
 // next to Volvagia → catch fish B → roll into the lava and throw the nut on the 12th roll frame (the lava hit interrupts
-// the throw) → the priming bombchu pops → prime (refused bomb press) → wait for the detonator bomb, backflip into it for
-// the OI (the priming bombchu's explosion is gone by then) → the floor fish dies after the OI bomb → bugs donor. Expected: OI bomb 801F7140, word 45000C94.
+// the throw) → the quickdraw bombchu pops → prime (refused bomb press) → wait for the detonator bomb, backflip into it for
+// the OI (the quickdraw bombchu's explosion is gone by then) → the floor fish dies after the OI bomb → bugs donor. Expected: OI bomb 801F7140, word 45000C94.
 // settings: Solve settings that the page applies when this preset is picked, so the result is the setup actually used
 // (one fish bottle with equip swap plus a bugs bottle). Nothing is added (max 0): the method already holds every step.
 var NUT_CURRENT = { donor: 'bugs', prime: 'chu', lock: 'c:start', rules: { noBombInBlast: true, oneDropPerBlast: true, noWaiting: true }, items: [
   { id: 'g', kind: 'fish', name: 'Floor fish A', opt: { end: 'die' } }, { id: 'k', kind: 'chu', name: 'Throwaway bombchu' },
-  { id: 'f', kind: 'fish', name: 'Fish B', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Priming bombchu' },
+  { id: 'f', kind: 'fish', name: 'Fish B', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Quickdraw bombchu' },
   { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'n', kind: 'nut', name: 'Deku nut', opt: {} }],
   order: ['g:start', 'k:start', 'k:pop', 'f:start', 'c:start', 'k:fade', 'x:start', 'f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', 'c:fade', '@oi', 'x:end', 'B:end', 'g:end', '@donor'] };
 var NUT_SETTINGS = { nb: 2, dupe: true, bot: { fish: true, bugs: true, fairy: false, bfire: false } };
@@ -1882,12 +1882,12 @@ var PRESETS = [
   { name: 'Chu-prime run-in (detonator bomb)', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'f', kind: 'fish', name: 'Bottled fish', opt: { end: 'catch' } },
-      { id: 'c', kind: 'chu', name: 'Priming bombchu' }],
+      { id: 'c', kind: 'chu', name: 'Quickdraw bombchu' }],
       order: ['x:start', 'f:start', 'c:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', '@donor'] } },
   { name: 'Dupe fish (bombchu pops on the floor fish)', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
       { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'g', kind: 'fish', name: 'Dupe-drop fish', opt: { end: 'die' } },
-      { id: 'f', kind: 'fish', name: 'Real-drop fish', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Priming bombchu' }],
+      { id: 'f', kind: 'fish', name: 'Real-drop fish', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Quickdraw bombchu' }],
       order: ['x:start', 'g:start', 'f:start', 'c:start', 'f:end', 'c:pop', '@prime', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor'] } },
   { name: 'Double chu', hidden: true,
     method: { donor: 'fish', prime: 'chu', items: [
@@ -2229,7 +2229,7 @@ var Swap = (function () {
   PRESETS.forEach(function (p, i) { $('preset').add(new Option(p.name, i)); });
   $('preset').addEventListener('change', function () {
     var v = $('preset').value;
-    if (v === 'empty') setMethod({ donor: 'fish', prime: 'chu', items: [{ id: 'c', kind: 'chu', name: 'Priming bombchu' }], order: ['c:start', 'c:pop', '@prime', '@oi', 'c:fade', 'B:end', '@donor'] }, 'Add the things your method uses, then move the steps into place.');
+    if (v === 'empty') setMethod({ donor: 'fish', prime: 'chu', items: [{ id: 'c', kind: 'chu', name: 'Quickdraw bombchu' }], order: ['c:start', 'c:pop', '@prime', '@oi', 'c:fade', 'B:end', '@donor'] }, 'Add the things your method uses, then move the steps into place.');
     else if (v !== 'own') { store('preset', v); applyPresetSettings(PRESETS[+v]); showCore(); clearSolve(); }
   });
 
@@ -3080,7 +3080,7 @@ var Swap = (function () {
   var CATCHED = ['f+', 'f2+', 'Q+'];
   var EXTRA_OF = { K3: 'K', A: 'A', 'Q+': 'Q', 'f2+': 'f2', U: 'U', 'G+': 'G' };
   var WORD = {
-    X: 'Throw the detonator bomb next to Volvagia', 'f+': 'Drop fish B', C: 'Drop the priming bombchu',
+    X: 'Throw the detonator bomb next to Volvagia', 'f+': 'Drop fish B', C: 'Drop the quickdraw bombchu',
     'f-': 'Catch fish B', 'G+': 'Drop the floor fish', K3: 'Send a throwaway bombchu',
     kp: 'Pop the throwaway (keep its explosion off the detonator bomb)', kf: 'the throwaway’s explosion fades',
     A: 'Shoot an arrow that hits nothing', a: 'the arrow disappears', 'Q+': 'Release the bugs', q0: 'Catch one bug back',
@@ -3088,8 +3088,8 @@ var Swap = (function () {
     U: 'Throw an extra bomb', u: 'the extra bomb has exploded and faded'
   };
   var ALAB = { K3: 'Throwaway bombchu', E3: 'Throwaway’s explosion', X: 'Detonator bomb', f2: 'Fish 2', f0: 'Fish B',
-    C: 'Priming bombchu', G: 'Floor fish', A: 'Arrow', U: 'Extra bomb', q0: 'Bug caught back', q1: 'Bug 2', q2: 'Bug 3',
-    nut: 'Nut', flash: 'Nut flash', fairy: 'Revive fairy', Ec: 'Priming bombchu’s explosion', B: 'OI bomb',
+    C: 'Quickdraw bombchu', G: 'Floor fish', A: 'Arrow', U: 'Extra bomb', q0: 'Bug caught back', q1: 'Bug 2', q2: 'Bug 3',
+    nut: 'Nut', flash: 'Nut flash', fairy: 'Revive fairy', Ec: 'Quickdraw bombchu’s explosion', B: 'OI bomb',
     r0: 'Donor bug 1', r1: 'Donor bug 2', r2: 'Donor bug 3' };
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
   function store(k, v) { try { localStorage.setItem('vhs2.death.' + k, v); } catch (e) {} }
