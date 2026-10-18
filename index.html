@@ -1771,9 +1771,25 @@ var NUT_CORE = function (bombFirst) {
     { id: 'n', kind: 'nut', name: 'Deku nut', opt: {} }],
     order: ['g:start', 'f:start'].concat(mid, ['f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'g:end', '@donor']) };
 };
+// The method in use (VOLVAGIA_STATUS_INDEX §1, user, 2026-10-18), written out in full with its throwaway bombchu as one of
+// the player's own steps, so the page shows exactly this order instead of having Solve pick a heap fix:
+// floor fish (equip-swap dupe) → throwaway bombchu dropped on it → it pops on the floor fish → drop fish B while the
+// throwaway's explosion is still out → priming bombchu into the hole → the throwaway's explosion fades → detonator bomb
+// next to Volvagia → catch fish B → roll into the lava and throw the nut on the 12th roll frame (the lava hit interrupts
+// the throw) → the priming bombchu pops → prime (refused bomb press) → wait for the detonator bomb, backflip into it for
+// the OI (the priming bombchu's explosion is gone by then) → the floor fish dies after the OI bomb → bugs donor. Expected: OI bomb 801F7140, word 45000C94.
+// settings: Solve settings that the page applies when this preset is picked, so the result is the setup actually used
+// (one fish bottle with equip swap plus a bugs bottle). Nothing is added (max 0): the method already holds every step.
+var NUT_CURRENT = { donor: 'bugs', prime: 'chu', lock: 'c:start', rules: { noBombInBlast: true, oneDropPerBlast: true, noWaiting: true }, items: [
+  { id: 'g', kind: 'fish', name: 'Floor fish A', opt: { end: 'die' } }, { id: 'k', kind: 'chu', name: 'Throwaway bombchu' },
+  { id: 'f', kind: 'fish', name: 'Fish B', opt: { end: 'catch' } }, { id: 'c', kind: 'chu', name: 'Priming bombchu' },
+  { id: 'x', kind: 'bomb', name: 'Detonator bomb', opt: { detonator: true } }, { id: 'n', kind: 'nut', name: 'Deku nut', opt: {} }],
+  order: ['g:start', 'k:start', 'k:pop', 'f:start', 'c:start', 'k:fade', 'x:start', 'f:end', 'n:start', 'n:pop', 'c:pop', '@prime', 'n:fade', 'c:fade', '@oi', 'x:end', 'B:end', 'g:end', '@donor'] };
+var NUT_SETTINGS = { nb: 2, dupe: true, bot: { fish: true, bugs: true, fairy: false, bfire: false } };
 var PRESETS = [
-  { name: 'Nut interrupt: chu → bomb', method: NUT_CORE(false) },
-  { name: 'Nut interrupt: bomb → chu', method: NUT_CORE(true) },
+  { name: 'Nut interrupt in the lava (current method)', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
+  { name: 'Nut interrupt: chu → bomb', method: NUT_CORE(false), settings: NUT_SETTINGS },
+  { name: 'Nut interrupt: bomb → chu', method: NUT_CORE(true), settings: NUT_SETTINGS },
   { name: 'Nut interrupt (10-17, superseded)', hidden: true, method: NUT_INTERRUPT(false),
     variants: [{ label: 'nut lands next to the bombchu', method: NUT_INTERRUPT(false) }, { label: 'nut hits the bombchu directly', method: NUT_INTERRUPT(true) }] },
   { name: 'Long chu',
@@ -2170,7 +2186,7 @@ var Swap = (function () {
   $('preset').addEventListener('change', function () {
     var v = $('preset').value;
     if (v === 'empty') setMethod({ donor: 'fish', prime: 'chu', items: [{ id: 'c', kind: 'chu', name: 'Priming bombchu' }], order: ['c:start', 'c:pop', '@prime', '@oi', 'c:fade', 'B:end', '@donor'] }, 'Add the things your method uses, then move the steps into place.');
-    else if (v !== 'own') { store('preset', v); showCore(); clearSolve(); }
+    else if (v !== 'own') { store('preset', v); applyPresetSettings(PRESETS[+v]); showCore(); clearSolve(); }
   });
 
   // ---------- Bomb + OI: solve (every way to add things so the heap works) ----------
@@ -2202,6 +2218,20 @@ var Swap = (function () {
   $('oi-nbot').value = String(oiSt.nb || 2); $('oi-dupe').checked = !!oiSt.dupe;
   $('oi-nbot').addEventListener('change', function () { oiSt.nb = +$('oi-nbot').value; oiSave(); });
   $('oi-dupe').addEventListener('change', function () { oiSt.dupe = $('oi-dupe').checked; oiSave(); });
+  // A preset may carry the Solve settings its method is meant for (p.settings: nb = bottles, dupe = equip swap,
+  // bot = bottled items, max = most things added). Picking the preset sets those boxes, so Solve gives the setup the
+  // method was written for (e.g. the current nut-interrupt method needs one fish bottle with equip swap plus bugs).
+  function applyPresetSettings(p) {
+    var st = p && p.settings; if (!st) return;
+    if (st.nb !== undefined) { oiSt.nb = st.nb; $('oi-nbot').value = String(st.nb); }
+    if (st.dupe !== undefined) { oiSt.dupe = !!st.dupe; $('oi-dupe').checked = !!st.dupe; }
+    if (st.max !== undefined) { oiSt.max = st.max; $('oi-max').value = String(st.max); }
+    if (st.bot) Object.keys(st.bot).forEach(function (k) {
+      oiSt.bot[k] = !!st.bot[k];
+      var el = document.querySelector('[data-oibot="' + k + '"]'); if (el) el.checked = !!st.bot[k];
+    });
+    oiSave();
+  }
   function oiContents() { return ['fish', 'bugs', 'fairy', 'bfire'].filter(function (k) { return oiSt.bot[k]; }); }
   // the bottles you carry: how many, what they may hold (the solver picks what each starts with) and equip swap
   function oiBottles() { return { n: oiSt.nb || 2, kinds: oiContents(), noDupe: !oiSt.dupe }; }
@@ -2993,7 +3023,7 @@ var Swap = (function () {
   // ---------- boot ----------
   // presets only: open on the last preset picked in this browser, else the first
   var pi = +(load('preset') || 0); if (!(pi >= 0 && pi < PRESETS.length)) pi = 0;
-  $('preset').value = String(pi); showCore();
+  $('preset').value = String(pi); applyPresetSettings(PRESETS[pi]); showCore();
 })();
 </script>
 </body></html>
