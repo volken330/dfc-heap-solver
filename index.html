@@ -251,7 +251,7 @@ select, input[type=text], input[type=number], textarea { background: var(--surfa
   <nav class="tabs" role="tablist" aria-label="Boss">
     <button role="tab" type="button" id="tabbtn-volv" data-tab="volv" aria-selected="true">Volvagia</button>
     <button role="tab" type="button" id="tabbtn-gdorf" data-tab="gdorf" aria-selected="false">Ganondorf</button>
-    <button role="tab" type="button" id="tabbtn-oi" data-tab="oi" aria-selected="false">Bomb + OI</button>
+    <button role="tab" type="button" id="tabbtn-oi" data-tab="oi" aria-selected="false">Volvagia (Bomb + OI)</button>
   </nav>
   <section id="tab-volv" class="tabpanel"></section>
   <section id="tab-gdorf" class="tabpanel" hidden></section>
@@ -1823,8 +1823,8 @@ var NUT_SETTINGS = { nb: 2, dupe: true, bot: { fish: true, bugs: true, fairy: fa
 var PRESETS = [
   { name: 'Nut interrupt in the lava', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
   { name: 'Nut interrupt by dying (fairy revive)', method: NUT_DEATH, settings: Object.assign({ max: 2 }, NUT_SETTINGS) },
-  { name: 'Nut interrupt: chu → bomb', method: NUT_CORE(false), settings: NUT_SETTINGS },
-  { name: 'Nut interrupt: bomb → chu', method: NUT_CORE(true), settings: NUT_SETTINGS },
+  { name: 'Nut interrupt: chu → bomb', hidden: true, method: NUT_CORE(false), settings: NUT_SETTINGS },
+  { name: 'Nut interrupt: bomb → chu', hidden: true, method: NUT_CORE(true), settings: NUT_SETTINGS },
   { name: 'Nut interrupt (10-17, superseded)', hidden: true, method: NUT_INTERRUPT(false),
     variants: [{ label: 'nut lands next to the bombchu', method: NUT_INTERRUPT(false) }, { label: 'nut hits the bombchu directly', method: NUT_INTERRUPT(true) }] },
   { name: 'Long chu',
