@@ -1821,8 +1821,8 @@ var NUT_DEATH = { donor: 'bugs', prime: 'chu', lock: 'n:start',
   order: ['x:start', 'f:start', 'c:start', 'f:end', 'n:start', 'e:start', 'n:pop', 'c:pop', '@prime', 'n:fade', '@oi', 'c:fade', 'x:end', 'B:end', 'e:end', '@donor'] };
 var NUT_SETTINGS = { nb: 2, dupe: true, bot: { fish: true, bugs: true, fairy: false, bfire: false } };
 var PRESETS = [
-  { name: 'Nut interrupt in the lava', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
   { name: 'Nut interrupt by dying (fairy revive)', method: NUT_DEATH, settings: Object.assign({ max: 2 }, NUT_SETTINGS) },
+  { name: 'Nut interrupt in the lava', method: NUT_CURRENT, settings: Object.assign({ max: 0 }, NUT_SETTINGS) },
   { name: 'Nut interrupt: chu → bomb', hidden: true, method: NUT_CORE(false), settings: NUT_SETTINGS },
   { name: 'Nut interrupt: bomb → chu', hidden: true, method: NUT_CORE(true), settings: NUT_SETTINGS },
   { name: 'Nut interrupt (10-17, superseded)', hidden: true, method: NUT_INTERRUPT(false),
